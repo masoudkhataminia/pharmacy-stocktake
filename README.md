@@ -1,36 +1,46 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Pharmacy Stocktake Scanner
 
-## Getting Started
+A Next.js prototype for pharmacy stocktake workflows.
 
-First, run the development server:
+## What it does
+
+- Imports pharmacy export files in CSV, TSV, or TXT format.
+- Auto-detects common columns such as label/Rx number, patient name, prescription date, medicine, and quantity.
+- Supports manual label entry and browser camera barcode scanning where `BarcodeDetector` is available.
+- Shows the matched patient, date, medicine, and quantity before saving.
+- Requires the user to press **Confirm** before a scan is saved.
+- Warns when the same label is scanned again.
+- Stores the current session in browser local storage.
+
+## Current status
+
+This branch replaces the default Create Next App screen with a working stocktake prototype suitable for early pharmacy demo/testing.
+
+## Run locally
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```text
+http://localhost:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Testing checklist
 
-## Learn More
+1. Click **Load demo**.
+2. Enter `RX10021` and press **Confirm**.
+3. Confirm that the app shows the patient, date, medicine, and quantity.
+4. Enter the same label again and confirm duplicate warning appears.
+5. Enter a missing label such as `RX99999` and confirm it is saved as unmatched.
+6. Upload a real pharmacy CSV export and check that column detection works.
+7. On a mobile browser that supports BarcodeDetector, test **Start camera** and scan a label without taking a photo.
 
-To learn more about Next.js, take a look at the following resources:
+## Notes
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Native `.xlsx` parsing is not included yet. Export Excel files as CSV first.
+- Camera barcode scanning depends on browser support for the Web Barcode Detection API.
+- No patient data leaves the browser in this prototype.
