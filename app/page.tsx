@@ -6,6 +6,7 @@ import * as XLSX from "xlsx";
 type ScriptRec = { scriptNumber: string; dispenseDate: string; patient: string; medicine: string; quantity: string };
 type Scan = { value: string; savedAt: string; status: "matched" | "unmatched"; record?: ScriptRec };
 type Batch = { fileName: string; uploadedAt: string; from: string; to: string; imported: number; updated: number; total: number };
+type UploadState = { active: boolean; percent: number; label: string };
 type BarcodeResult = { rawValue: string };
 type Detector = { detect: (video: HTMLVideoElement) => Promise<BarcodeResult[]> };
 
@@ -24,6 +25,7 @@ const QTY_COLS = ["quantity", "qty", "qty supplied", "quantity supplied"];
 
 const norm = (v: unknown) => String(v ?? "").toLowerCase().replace(/[^a-z0-9]+/gi, "").trim();
 const dig = (v: unknown) => String(v ?? "").replace(/\D/g, "");
+const waitFrame = () => new Promise((resolve) => window.setTimeout(resolve, 40));
 
 type RawRow = Record<string, string>;
 
@@ -64,11 +66,10 @@ function rowsToScripts(rows: RawRow[]) {
   return rows.map((row) => {
     const first = pick(row, FIRST_COLS);
     const last = pick(row, LAST_COLS);
-    const patient = [first, last].filter(Boolean).join(" ") || pick(row, PATIENT_COLS);
     return {
       scriptNumber: pick(row, SCRIPT_COLS),
       dispenseDate: pick(row, DATE_COLS),
-      patient,
+      patient: [first, last].filter(Boolean).join(" ") || pick(row, PATIENT_COLS),
       medicine: pick(row, MED_COLS),
       quantity: pick(row, QTY_COLS),
     } satisfies ScriptRec;
@@ -140,6 +141,7 @@ export default function Home() {
   const [cameraOn, setCameraOn] = useState(false);
   const [last, setLast] = useState<Scan | null>(null);
   const [message, setMessage] = useState("Scan labels with phone camera. Upload FRED file at the bottom.");
+  const [uploadState, setUploadState] = useState<UploadState>({ active: false, percent: 0, label: "" });
 
   useEffect(() => {
     try {
@@ -177,9 +179,28 @@ export default function Home() {
   const preview: Scan | null = value ? { value, savedAt: new Date().toISOString(), status: current ? "matched" : "unmatched", record: current } : last;
 
   async function upload(file: File) {
-    setMessage(`Reading ${file.name}...`);
+    setUploadState({ active: true, percent: 5, label: `Selected ${file.name}` });
+    setMessage(`Selected ${file.name}. Preparing upload...`);
+    await waitFrame();
+
     try {
+      setUploadState({ active: true, percent: 20, label: "Reading Excel file..." });
+      setMessage(`Reading ${file.name}...`);
+      await waitFrame();
+
       const incoming = await parseFredFile(file);
+      setUploadState({ active: true, percent: 55, label: `Found ${incoming.length} script rows` });
+      await waitFrame();
+
+      if (incoming.length === 0) {
+        setUploadState({ active: false, percent: 0, label: "" });
+        setMessage("No script rows found. Check that this is the FRED script export and includes Script Number.");
+        return;
+      }
+
+      setUploadState({ active: true, percent: 75, label: "Merging with saved master..." });
+      await waitFrame();
+
       const map = new Map(scripts.map((r) => [r.scriptNumber, r]));
       let updated = 0;
       for (const rec of incoming) {
@@ -190,13 +211,20 @@ export default function Home() {
       const merged = [...map.values()].sort((a, b) => dateValue(a.dispenseDate) - dateValue(b.dispenseDate));
       const fileRange = rangeLabel(incoming);
       const batch = { fileName: file.name, uploadedAt: new Date().toISOString(), from: fileRange.from, to: fileRange.to, imported: incoming.length, updated, total: merged.length };
+
+      setUploadState({ active: true, percent: 90, label: "Saving master file..." });
+      await waitFrame();
+
       localStorage.setItem(SCRIPT_STORE, JSON.stringify(merged));
       localStorage.setItem(BATCH_STORE, JSON.stringify([batch, ...batches]));
       setScripts(merged);
       setBatches((old) => [batch, ...old]);
       setMessage(`Scripts from ${fileRange.from || "?"} to ${fileRange.to || "?"} uploaded.`);
-    } catch {
-      setMessage("Could not read or save this file. Try exporting a smaller FRED date range.");
+      setUploadState({ active: true, percent: 100, label: `Uploaded ${incoming.length} rows. Master total ${merged.length}.` });
+      window.setTimeout(() => setUploadState({ active: false, percent: 0, label: "" }), 1800);
+    } catch (error) {
+      setUploadState({ active: false, percent: 0, label: "" });
+      setMessage(error instanceof Error ? `Upload failed: ${error.message}` : "Could not read or save this file. Try exporting a smaller FRED date range.");
     }
   }
 
@@ -227,6 +255,6 @@ export default function Home() {
     <section className="rounded-3xl bg-emerald-50 p-5 text-slate-950 shadow-xl ring-4 ring-emerald-300/40"><div className="grid gap-4 lg:grid-cols-[320px_1fr]"><div><div className="relative overflow-hidden rounded-3xl border-4 border-emerald-500 bg-black"><video ref={videoRef} className="h-56 w-full object-cover sm:h-64" autoPlay muted playsInline /><div className="pointer-events-none absolute inset-x-8 top-1/2 h-20 -translate-y-1/2 rounded-2xl border-4 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.28)]" /></div><div className="mt-3 grid grid-cols-2 gap-2"><button onClick={startCamera} className="rounded-2xl bg-emerald-600 px-4 py-3 font-black text-white">Start camera</button><button onClick={stopCamera} className="rounded-2xl border bg-white px-4 py-3 font-bold">Stop</button></div></div><div className="flex flex-col gap-3"><div className="rounded-3xl bg-white p-4"><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Scanned label</p><p className="mt-2 min-h-10 break-all text-3xl font-black">{value || "Waiting for camera..."}</p></div><div className="rounded-3xl bg-white p-4"><h2 className="text-xl font-black">{value ? "Current match" : "Last confirmed"}</h2>{preview?.record ? <div className="mt-3 space-y-2 text-sm"><p className="rounded-2xl bg-emerald-100 p-3 font-black text-emerald-900">{value ? "Matched preview" : "Matched and saved"}</p><p><strong>Patient:</strong> {preview.record.patient || "-"}</p><p><strong>Date:</strong> {auDate(preview.record.dispenseDate) || "-"}</p><p><strong>Medicine:</strong> {preview.record.medicine || "-"}</p><p><strong>Script:</strong> {preview.record.scriptNumber || "-"}</p></div> : preview ? <p className="mt-3 rounded-2xl bg-rose-100 p-3 text-sm font-bold text-rose-900">No matching script in FRED master.</p> : <p className="mt-3 rounded-2xl bg-slate-100 p-3 text-sm font-bold text-slate-600">Scan a label.</p>}</div><button onClick={confirm} disabled={!value.trim()} className="rounded-3xl bg-emerald-600 px-8 py-5 text-2xl font-black text-white disabled:opacity-40">Confirm scan</button></div></div></section>
     <details className="rounded-3xl bg-white p-4 text-slate-950 shadow-xl"><summary className="cursor-pointer text-lg font-black">Manual fallback</summary><div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]"><input value={manual} onChange={(e) => { setManual(e.target.value); setDetected(""); }} onKeyDown={(e) => { if (e.key === "Enter") confirm(); }} placeholder="Type script / label number manually" className="rounded-2xl border-2 px-4 py-4 text-xl font-black" /><button onClick={confirm} disabled={!value.trim()} className="rounded-2xl bg-slate-950 px-6 py-4 font-black text-white disabled:opacity-40">Confirm</button></div></details>
     <section className="rounded-3xl bg-white p-5 text-slate-950 shadow-xl"><div className="flex items-center justify-between"><div><h2 className="text-2xl font-black">Confirmed scans</h2><p className="text-sm text-slate-600">Saved after Confirm.</p></div><button onClick={clearScans} className="rounded-full border border-rose-200 px-4 py-2 text-sm font-bold text-rose-700">Clear scans</button></div><div className="mt-5 grid gap-3 lg:grid-cols-2">{scans.length === 0 && <p className="rounded-2xl bg-slate-100 p-5 text-center text-sm text-slate-500 lg:col-span-2">Nothing confirmed yet.</p>}{scans.map((s) => <article key={`${s.value}-${s.savedAt}`} className="rounded-2xl border p-4"><div className="flex items-center justify-between gap-2"><p className="text-xl font-black">{s.value}</p><span className={s.status === "matched" ? "rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800" : "rounded-full bg-rose-100 px-3 py-1 text-xs font-black text-rose-800"}>{s.status.toUpperCase()}</span></div><p className="mt-1 text-xs text-slate-500">{fmt(s.savedAt)}</p>{s.record && <p className="mt-2 text-sm text-slate-700">{s.record.patient || "-"} | {auDate(s.record.dispenseDate) || "-"} | {s.record.medicine || "-"}</p>}</article>)}</div></section>
-    <footer className="rounded-3xl bg-white/10 p-4 text-center"><input type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.currentTarget.value = ""; }} className="block w-full rounded-2xl bg-white p-4 text-sm font-black text-slate-950 file:mr-4 file:rounded-full file:border-0 file:bg-emerald-600 file:px-5 file:py-3 file:font-black file:text-white" />{batches.length > 0 && <p className="mt-3 text-sm text-slate-300">Last upload: Scripts from {batches[0].from} to {batches[0].to} uploaded. Master total: {batches[0].total}</p>}<div>{batches.length > 0 && <button onClick={clearMaster} className="mt-3 text-xs font-bold text-rose-300">Clear uploaded FRED master</button>}</div></footer>
+    <footer className="rounded-3xl bg-white/10 p-4 text-center"><input type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" disabled={uploadState.active} onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.currentTarget.value = ""; }} className="block w-full rounded-2xl bg-white p-4 text-sm font-black text-slate-950 file:mr-4 file:rounded-full file:border-0 file:bg-emerald-600 file:px-5 file:py-3 file:font-black file:text-white disabled:opacity-50" />{uploadState.active && <div className="mt-4 rounded-2xl bg-white p-4 text-left text-slate-950"><div className="flex items-center justify-between text-sm font-black"><span>{uploadState.label}</span><span>{uploadState.percent}%</span></div><div className="mt-3 h-3 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-emerald-600 transition-all" style={{ width: `${uploadState.percent}%` }} /></div></div>}{batches.length > 0 && <p className="mt-3 text-sm text-slate-300">Last upload: Scripts from {batches[0].from} to {batches[0].to} uploaded. Master total: {batches[0].total}</p>}<div>{batches.length > 0 && <button onClick={clearMaster} className="mt-3 text-xs font-bold text-rose-300">Clear uploaded FRED master</button>}</div></footer>
   </section></main>;
 }
