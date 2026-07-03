@@ -12,9 +12,12 @@ type Detector = { detect: (video: HTMLVideoElement) => Promise<BarcodeResult[]> 
 
 declare global { interface Window { BarcodeDetector?: { new (options?: { formats?: string[] }): Detector } } }
 
-const SCRIPT_STORE = "fred-master-scripts-v2";
-const SCAN_STORE = "fred-label-scans-v2";
-const BATCH_STORE = "fred-upload-batches-v2";
+type RawRow = Record<string, string>;
+
+const DB = "pharmacy-verification-db";
+const SCRIPT_KEY = "fred-master-scripts-v3";
+const SCAN_KEY = "fred-label-scans-v3";
+const BATCH_KEY = "fred-upload-batches-v3";
 const SCRIPT_COLS = ["script number", "script no", "rx", "rx no", "prescription no", "prescription number", "label", "label no"];
 const DATE_COLS = ["dispense date", "dispensed date", "date dispensed", "script date", "prescribed date", "date"];
 const LAST_COLS = ["patient last name", "last name", "surname"];
@@ -25,9 +28,43 @@ const QTY_COLS = ["quantity", "qty", "qty supplied", "quantity supplied"];
 
 const norm = (v: unknown) => String(v ?? "").toLowerCase().replace(/[^a-z0-9]+/gi, "").trim();
 const dig = (v: unknown) => String(v ?? "").replace(/\D/g, "");
-const waitFrame = () => new Promise((resolve) => window.setTimeout(resolve, 40));
+const frame = () => new Promise((resolve) => window.setTimeout(resolve, 40));
 
-type RawRow = Record<string, string>;
+function openDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("kv");
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbGet<T>(key: string, fallback: T): Promise<T> {
+  const db = await openDb();
+  return new Promise((resolve) => {
+    const req = db.transaction("kv", "readonly").objectStore("kv").get(key);
+    req.onsuccess = () => resolve((req.result as T) ?? fallback);
+    req.onerror = () => resolve(fallback);
+  });
+}
+
+async function idbSet<T>(key: string, value: T) {
+  const db = await openDb();
+  return new Promise<void>((resolve, reject) => {
+    const req = db.transaction("kv", "readwrite").objectStore("kv").put(value, key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbDel(key: string) {
+  const db = await openDb();
+  return new Promise<void>((resolve) => {
+    const req = db.transaction("kv", "readwrite").objectStore("kv").delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror = () => resolve();
+  });
+}
 
 function pick(row: RawRow, keys: string[]) {
   const entries = Object.entries(row);
@@ -39,27 +76,25 @@ function pick(row: RawRow, keys: string[]) {
 
 function auDate(raw: string) {
   if (!raw) return "";
+  const m = String(raw).match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+  if (m) return `${m[1].padStart(2, "0")}/${m[2].padStart(2, "0")}/${m[3].length === 2 ? `20${m[3]}` : m[3]}`;
   const d = new Date(raw);
-  if (!Number.isNaN(d.getTime())) return new Intl.DateTimeFormat("en-AU").format(d);
-  const m = raw.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
-  return m ? `${m[1].padStart(2, "0")}/${m[2].padStart(2, "0")}/${m[3].length === 2 ? `20${m[3]}` : m[3]}` : raw;
+  return Number.isNaN(d.getTime()) ? raw : new Intl.DateTimeFormat("en-AU").format(d);
 }
 
 function dateValue(raw: string) {
+  const m = String(raw).match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+  if (m) return new Date(Number(m[3].length === 2 ? `20${m[3]}` : m[3]), Number(m[2]) - 1, Number(m[1])).getTime();
   const d = new Date(raw);
-  if (!Number.isNaN(d.getTime())) return d.getTime();
-  const m = raw.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
-  if (!m) return 0;
-  const y = Number(m[3].length === 2 ? `20${m[3]}` : m[3]);
-  return new Date(y, Number(m[2]) - 1, Number(m[1])).getTime();
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
 }
 
 function findHeaderIndex(rows: unknown[][]) {
-  const index = rows.findIndex((row) => {
+  const idx = rows.findIndex((row) => {
     const text = row.map((c) => String(c ?? "").toLowerCase()).join(" | ");
     return text.includes("script number") && (text.includes("patient") || text.includes("drug description"));
   });
-  return index >= 0 ? index : 0;
+  return idx >= 0 ? idx : 0;
 }
 
 function rowsToScripts(rows: RawRow[]) {
@@ -123,9 +158,13 @@ function rangeLabel(records: ScriptRec[]) {
 }
 
 function findScript(records: ScriptRec[], value: string) {
-  const c = norm(value); const d = dig(value);
+  const c = norm(value);
+  const d = dig(value);
   if (!c && !d) return undefined;
-  return records.find((r) => norm(r.scriptNumber) === c || Boolean(d && dig(r.scriptNumber) === d));
+  return records.find((r) => {
+    const sd = dig(r.scriptNumber);
+    return norm(r.scriptNumber) === c || Boolean(d && sd && (sd === d || d.includes(sd) || sd.includes(d)));
+  });
 }
 
 const fmt = (v: string) => new Intl.DateTimeFormat("en-AU", { dateStyle: "short", timeStyle: "short" }).format(new Date(v));
@@ -140,21 +179,23 @@ export default function Home() {
   const [detected, setDetected] = useState("");
   const [cameraOn, setCameraOn] = useState(false);
   const [last, setLast] = useState<Scan | null>(null);
-  const [message, setMessage] = useState("Scan labels with phone camera. Upload FRED file at the bottom.");
+  const [message, setMessage] = useState("Stage 1: scan label barcode. Stage 2: scan prescription image.");
   const [uploadState, setUploadState] = useState<UploadState>({ active: false, percent: 0, label: "" });
+  const [rxImage, setRxImage] = useState<string>("");
+  const [rxMessage, setRxMessage] = useState("Prescription AI/OCR scan is the next stage; upload/photo capture UI is separated here.");
 
   useEffect(() => {
-    try {
-      const s = JSON.parse(localStorage.getItem(SCRIPT_STORE) || "[]") as ScriptRec[];
-      const sc = JSON.parse(localStorage.getItem(SCAN_STORE) || "[]") as Scan[];
-      const b = JSON.parse(localStorage.getItem(BATCH_STORE) || "[]") as Batch[];
+    void (async () => {
+      const s = await idbGet<ScriptRec[]>(SCRIPT_KEY, []);
+      const sc = await idbGet<Scan[]>(SCAN_KEY, []);
+      const b = await idbGet<Batch[]>(BATCH_KEY, []);
       setScripts(s); setScans(sc); setBatches(b); setLast(sc[0] ?? null);
-    } catch { /* ignore */ }
+    })();
   }, []);
 
-  useEffect(() => { try { localStorage.setItem(SCRIPT_STORE, JSON.stringify(scripts)); } catch { setMessage("File is too large for browser storage. Upload a smaller date range."); } }, [scripts]);
-  useEffect(() => { localStorage.setItem(SCAN_STORE, JSON.stringify(scans)); }, [scans]);
-  useEffect(() => { localStorage.setItem(BATCH_STORE, JSON.stringify(batches)); }, [batches]);
+  useEffect(() => { void idbSet(SCRIPT_KEY, scripts); }, [scripts]);
+  useEffect(() => { void idbSet(SCAN_KEY, scans); }, [scans]);
+  useEffect(() => { void idbSet(BATCH_KEY, batches); }, [batches]);
 
   useEffect(() => {
     if (!cameraOn || !videoRef.current || !window.BarcodeDetector) return;
@@ -164,7 +205,7 @@ export default function Home() {
       if (off || !videoRef.current) return;
       try {
         const val = (await detector.detect(videoRef.current))[0]?.rawValue?.trim();
-        if (val && val !== detected) { setDetected(val); setManual(""); setMessage(`Scanned ${val}. Confirm if correct.`); }
+        if (val && val !== detected) { setDetected(val); setManual(""); setMessage(`Label scanned: ${val}. Confirm if correct.`); }
       } catch { setMessage("Camera open, but barcode reading is not reliable in this browser. Use Chrome/Edge or manual fallback."); }
       setTimeout(loop, 300);
     };
@@ -180,27 +221,18 @@ export default function Home() {
 
   async function upload(file: File) {
     setUploadState({ active: true, percent: 5, label: `Selected ${file.name}` });
-    setMessage(`Selected ${file.name}. Preparing upload...`);
-    await waitFrame();
-
+    await frame();
     try {
-      setUploadState({ active: true, percent: 20, label: "Reading Excel file..." });
-      setMessage(`Reading ${file.name}...`);
-      await waitFrame();
-
+      setUploadState({ active: true, percent: 25, label: "Reading FRED Excel..." });
       const incoming = await parseFredFile(file);
-      setUploadState({ active: true, percent: 55, label: `Found ${incoming.length} script rows` });
-      await waitFrame();
-
+      await frame();
       if (incoming.length === 0) {
         setUploadState({ active: false, percent: 0, label: "" });
-        setMessage("No script rows found. Check that this is the FRED script export and includes Script Number.");
+        setMessage("No script rows found. This must be the FRED List of Scripts export with Script Number.");
         return;
       }
-
-      setUploadState({ active: true, percent: 75, label: "Merging with saved master..." });
-      await waitFrame();
-
+      setUploadState({ active: true, percent: 60, label: `Found ${incoming.length} scripts. Merging...` });
+      await frame();
       const map = new Map(scripts.map((r) => [r.scriptNumber, r]));
       let updated = 0;
       for (const rec of incoming) {
@@ -211,20 +243,16 @@ export default function Home() {
       const merged = [...map.values()].sort((a, b) => dateValue(a.dispenseDate) - dateValue(b.dispenseDate));
       const fileRange = rangeLabel(incoming);
       const batch = { fileName: file.name, uploadedAt: new Date().toISOString(), from: fileRange.from, to: fileRange.to, imported: incoming.length, updated, total: merged.length };
-
-      setUploadState({ active: true, percent: 90, label: "Saving master file..." });
-      await waitFrame();
-
-      localStorage.setItem(SCRIPT_STORE, JSON.stringify(merged));
-      localStorage.setItem(BATCH_STORE, JSON.stringify([batch, ...batches]));
-      setScripts(merged);
-      setBatches((old) => [batch, ...old]);
-      setMessage(`Scripts from ${fileRange.from || "?"} to ${fileRange.to || "?"} uploaded.`);
-      setUploadState({ active: true, percent: 100, label: `Uploaded ${incoming.length} rows. Master total ${merged.length}.` });
+      setUploadState({ active: true, percent: 90, label: "Saving to IndexedDB..." });
+      await idbSet(SCRIPT_KEY, merged);
+      await idbSet(BATCH_KEY, [batch, ...batches]);
+      setScripts(merged); setBatches((old) => [batch, ...old]);
+      setMessage(`Scripts from ${fileRange.from || "?"} to ${fileRange.to || "?"} uploaded. Master total: ${merged.length}.`);
+      setUploadState({ active: true, percent: 100, label: `Uploaded. Master total ${merged.length}.` });
       window.setTimeout(() => setUploadState({ active: false, percent: 0, label: "" }), 1800);
-    } catch (error) {
+    } catch (e) {
       setUploadState({ active: false, percent: 0, label: "" });
-      setMessage(error instanceof Error ? `Upload failed: ${error.message}` : "Could not read or save this file. Try exporting a smaller FRED date range.");
+      setMessage(e instanceof Error ? `Upload failed: ${e.message}` : "Upload failed.");
     }
   }
 
@@ -234,7 +262,7 @@ export default function Home() {
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       setCameraOn(true);
-      setMessage(window.BarcodeDetector ? "Camera ready. Put barcode inside the scan box." : "Camera on, but BarcodeDetector unavailable. Use manual fallback.");
+      setMessage(window.BarcodeDetector ? "Label camera ready. Put only the barcode inside the rectangle." : "Camera on, but BarcodeDetector unavailable. Use manual fallback.");
     } catch { setMessage("Camera permission denied or no camera found."); }
   }
 
@@ -244,17 +272,19 @@ export default function Home() {
     const rec = findScript(scripts, v);
     const scan: Scan = { value: v, savedAt: new Date().toISOString(), status: rec ? "matched" : "unmatched", record: rec };
     setScans((old) => [scan, ...old.filter((s) => norm(s.value) !== norm(v))]);
-    setLast(scan); setManual(""); setDetected(""); setMessage(rec ? `${v} confirmed.` : `${v} saved as unmatched.`);
+    setLast(scan); setManual(""); setDetected(""); setMessage(rec ? `${v} confirmed. Now scan prescription in Stage 2.` : `${v} saved as unmatched.`);
   }
-  function clearScans() { setScans([]); setLast(null); localStorage.removeItem(SCAN_STORE); }
-  function clearMaster() { setScripts([]); setBatches([]); localStorage.removeItem(SCRIPT_STORE); localStorage.removeItem(BATCH_STORE); setMessage("FRED master cleared."); }
+  function clearScans() { setScans([]); setLast(null); void idbDel(SCAN_KEY); }
+  function clearMaster() { setScripts([]); setBatches([]); void idbDel(SCRIPT_KEY); void idbDel(BATCH_KEY); setMessage("FRED master cleared."); }
+  function prescriptionFile(file: File) { setRxImage(URL.createObjectURL(file)); setRxMessage(`Prescription image selected: ${file.name}. AI extraction will compare this full prescription against confirmed label scans.`); }
 
   return <main className="min-h-screen bg-slate-950 px-4 py-4 text-slate-100 sm:px-6 lg:px-8"><section className="mx-auto flex max-w-7xl flex-col gap-4">
-    <header className="rounded-3xl border border-white/10 bg-white/10 p-5 shadow-2xl"><p className="text-xs font-bold uppercase tracking-[0.3em] text-emerald-300">Pharmacy Verification</p><h1 className="mt-2 text-2xl font-black text-white sm:text-4xl">Scan label → match FRED script</h1><p className="mt-3 text-sm leading-7 text-slate-300">Master file: {scripts.length ? `Scripts from ${masterRange.from} to ${masterRange.to}` : "no FRED file uploaded yet"}</p></header>
-    <section className="grid gap-3 sm:grid-cols-4"><div className="rounded-2xl bg-white p-4 text-slate-950"><p className="text-2xl font-black">{scripts.length}</p><p className="text-xs text-slate-500">Master scripts</p></div><div className="rounded-2xl bg-emerald-100 p-4 text-emerald-950"><p className="text-2xl font-black">{matched}</p><p className="text-xs">Matched scans</p></div><div className="rounded-2xl bg-amber-100 p-4 text-amber-950"><p className="text-2xl font-black">{scans.length - matched}</p><p className="text-xs">Unmatched</p></div><div className="rounded-2xl bg-white/10 p-4 text-white"><p className="truncate text-sm font-black">{batches[0]?.fileName || "No upload"}</p><p className="text-xs text-slate-400">Last file</p></div></section>
-    <section className="rounded-3xl bg-emerald-50 p-5 text-slate-950 shadow-xl ring-4 ring-emerald-300/40"><div className="grid gap-4 lg:grid-cols-[320px_1fr]"><div><div className="relative overflow-hidden rounded-3xl border-4 border-emerald-500 bg-black"><video ref={videoRef} className="h-56 w-full object-cover sm:h-64" autoPlay muted playsInline /><div className="pointer-events-none absolute inset-x-8 top-1/2 h-20 -translate-y-1/2 rounded-2xl border-4 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.28)]" /></div><div className="mt-3 grid grid-cols-2 gap-2"><button onClick={startCamera} className="rounded-2xl bg-emerald-600 px-4 py-3 font-black text-white">Start camera</button><button onClick={stopCamera} className="rounded-2xl border bg-white px-4 py-3 font-bold">Stop</button></div></div><div className="flex flex-col gap-3"><div className="rounded-3xl bg-white p-4"><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Scanned label</p><p className="mt-2 min-h-10 break-all text-3xl font-black">{value || "Waiting for camera..."}</p></div><div className="rounded-3xl bg-white p-4"><h2 className="text-xl font-black">{value ? "Current match" : "Last confirmed"}</h2>{preview?.record ? <div className="mt-3 space-y-2 text-sm"><p className="rounded-2xl bg-emerald-100 p-3 font-black text-emerald-900">{value ? "Matched preview" : "Matched and saved"}</p><p><strong>Patient:</strong> {preview.record.patient || "-"}</p><p><strong>Date:</strong> {auDate(preview.record.dispenseDate) || "-"}</p><p><strong>Medicine:</strong> {preview.record.medicine || "-"}</p><p><strong>Script:</strong> {preview.record.scriptNumber || "-"}</p></div> : preview ? <p className="mt-3 rounded-2xl bg-rose-100 p-3 text-sm font-bold text-rose-900">No matching script in FRED master.</p> : <p className="mt-3 rounded-2xl bg-slate-100 p-3 text-sm font-bold text-slate-600">Scan a label.</p>}</div><button onClick={confirm} disabled={!value.trim()} className="rounded-3xl bg-emerald-600 px-8 py-5 text-2xl font-black text-white disabled:opacity-40">Confirm scan</button></div></div></section>
-    <details className="rounded-3xl bg-white p-4 text-slate-950 shadow-xl"><summary className="cursor-pointer text-lg font-black">Manual fallback</summary><div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]"><input value={manual} onChange={(e) => { setManual(e.target.value); setDetected(""); }} onKeyDown={(e) => { if (e.key === "Enter") confirm(); }} placeholder="Type script / label number manually" className="rounded-2xl border-2 px-4 py-4 text-xl font-black" /><button onClick={confirm} disabled={!value.trim()} className="rounded-2xl bg-slate-950 px-6 py-4 font-black text-white disabled:opacity-40">Confirm</button></div></details>
-    <section className="rounded-3xl bg-white p-5 text-slate-950 shadow-xl"><div className="flex items-center justify-between"><div><h2 className="text-2xl font-black">Confirmed scans</h2><p className="text-sm text-slate-600">Saved after Confirm.</p></div><button onClick={clearScans} className="rounded-full border border-rose-200 px-4 py-2 text-sm font-bold text-rose-700">Clear scans</button></div><div className="mt-5 grid gap-3 lg:grid-cols-2">{scans.length === 0 && <p className="rounded-2xl bg-slate-100 p-5 text-center text-sm text-slate-500 lg:col-span-2">Nothing confirmed yet.</p>}{scans.map((s) => <article key={`${s.value}-${s.savedAt}`} className="rounded-2xl border p-4"><div className="flex items-center justify-between gap-2"><p className="text-xl font-black">{s.value}</p><span className={s.status === "matched" ? "rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800" : "rounded-full bg-rose-100 px-3 py-1 text-xs font-black text-rose-800"}>{s.status.toUpperCase()}</span></div><p className="mt-1 text-xs text-slate-500">{fmt(s.savedAt)}</p>{s.record && <p className="mt-2 text-sm text-slate-700">{s.record.patient || "-"} | {auDate(s.record.dispenseDate) || "-"} | {s.record.medicine || "-"}</p>}</article>)}</div></section>
+    <header className="rounded-3xl border border-white/10 bg-white/10 p-5 shadow-2xl"><p className="text-xs font-bold uppercase tracking-[0.3em] text-emerald-300">Pharmacy Verification</p><h1 className="mt-2 text-2xl font-black text-white sm:text-4xl">Label scan + prescription verification</h1><p className="mt-3 text-sm leading-7 text-slate-300">Master file: {scripts.length ? `Scripts from ${masterRange.from} to ${masterRange.to}` : "no FRED file uploaded yet"}</p></header>
+    <section className="grid gap-3 sm:grid-cols-4"><div className="rounded-2xl bg-white p-4 text-slate-950"><p className="text-2xl font-black">{scripts.length}</p><p className="text-xs text-slate-500">Master scripts</p></div><div className="rounded-2xl bg-emerald-100 p-4 text-emerald-950"><p className="text-2xl font-black">{matched}</p><p className="text-xs">Matched labels</p></div><div className="rounded-2xl bg-amber-100 p-4 text-amber-950"><p className="text-2xl font-black">{scans.length - matched}</p><p className="text-xs">Unmatched</p></div><div className="rounded-2xl bg-white/10 p-4 text-white"><p className="truncate text-sm font-black">{batches[0]?.fileName || "No upload"}</p><p className="text-xs text-slate-400">Last file</p></div></section>
+    <section className="rounded-3xl bg-emerald-50 p-5 text-slate-950 shadow-xl ring-4 ring-emerald-300/40"><h2 className="mb-3 text-2xl font-black">Stage 1 — Label barcode scan</h2><div className="grid gap-4 lg:grid-cols-[320px_1fr]"><div><div className="relative overflow-hidden rounded-3xl border-4 border-emerald-500 bg-black"><video ref={videoRef} className="h-56 w-full object-cover sm:h-64" autoPlay muted playsInline /><div className="pointer-events-none absolute inset-x-8 top-1/2 h-20 -translate-y-1/2 rounded-2xl border-4 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.28)]" /></div><div className="mt-3 grid grid-cols-2 gap-2"><button onClick={startCamera} className="rounded-2xl bg-emerald-600 px-4 py-3 font-black text-white">Start label camera</button><button onClick={stopCamera} className="rounded-2xl border bg-white px-4 py-3 font-bold">Stop</button></div></div><div className="flex flex-col gap-3"><div className="rounded-3xl bg-white p-4"><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Scanned label / script number</p><p className="mt-2 min-h-10 break-all text-3xl font-black">{value || "Waiting for label barcode..."}</p></div><div className="rounded-3xl bg-white p-4"><h2 className="text-xl font-black">{value ? "Current FRED match" : "Last confirmed label"}</h2>{preview?.record ? <div className="mt-3 space-y-2 text-sm"><p className="rounded-2xl bg-emerald-100 p-3 font-black text-emerald-900">{value ? "Matched preview" : "Matched and saved"}</p><p><strong>Patient:</strong> {preview.record.patient || "-"}</p><p><strong>Date:</strong> {auDate(preview.record.dispenseDate) || "-"}</p><p><strong>Medicine:</strong> {preview.record.medicine || "-"}</p><p><strong>Script:</strong> {preview.record.scriptNumber || "-"}</p></div> : preview ? <p className="mt-3 rounded-2xl bg-rose-100 p-3 text-sm font-bold text-rose-900">No matching script in FRED master.</p> : <p className="mt-3 rounded-2xl bg-slate-100 p-3 text-sm font-bold text-slate-600">Scan a label.</p>}</div><button onClick={confirm} disabled={!value.trim()} className="rounded-3xl bg-emerald-600 px-8 py-5 text-2xl font-black text-white disabled:opacity-40">Confirm label</button></div></div></section>
+    <section className="rounded-3xl bg-white p-5 text-slate-950 shadow-xl"><h2 className="text-2xl font-black">Stage 2 — Prescription scan/photo</h2><p className="mt-2 text-sm text-slate-600">This is for the full original prescription, not barcode. No rectangle here.</p><input type="file" accept="image/*,.pdf" capture="environment" onChange={(e) => { const f = e.target.files?.[0]; if (f) prescriptionFile(f); e.currentTarget.value = ""; }} className="mt-4 block w-full rounded-2xl border bg-slate-50 p-4 text-sm font-black file:mr-4 file:rounded-full file:border-0 file:bg-slate-950 file:px-5 file:py-3 file:font-black file:text-white" /><p className="mt-3 rounded-2xl bg-slate-100 p-3 text-sm font-bold text-slate-700">{rxMessage}</p>{rxImage && <img src={rxImage} alt="Prescription preview" className="mt-4 max-h-96 rounded-2xl border object-contain" />}</section>
+    <details className="rounded-3xl bg-white p-4 text-slate-950 shadow-xl"><summary className="cursor-pointer text-lg font-black">Manual label fallback</summary><div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]"><input value={manual} onChange={(e) => { setManual(e.target.value); setDetected(""); }} onKeyDown={(e) => { if (e.key === "Enter") confirm(); }} placeholder="Type script / label number manually" className="rounded-2xl border-2 px-4 py-4 text-xl font-black" /><button onClick={confirm} disabled={!value.trim()} className="rounded-2xl bg-slate-950 px-6 py-4 font-black text-white disabled:opacity-40">Confirm</button></div></details>
+    <section className="rounded-3xl bg-white p-5 text-slate-950 shadow-xl"><div className="flex items-center justify-between"><div><h2 className="text-2xl font-black">Confirmed label scans</h2><p className="text-sm text-slate-600">Saved after Confirm label.</p></div><button onClick={clearScans} className="rounded-full border border-rose-200 px-4 py-2 text-sm font-bold text-rose-700">Clear scans</button></div><div className="mt-5 grid gap-3 lg:grid-cols-2">{scans.length === 0 && <p className="rounded-2xl bg-slate-100 p-5 text-center text-sm text-slate-500 lg:col-span-2">Nothing confirmed yet.</p>}{scans.map((s) => <article key={`${s.value}-${s.savedAt}`} className="rounded-2xl border p-4"><div className="flex items-center justify-between gap-2"><p className="text-xl font-black">{s.value}</p><span className={s.status === "matched" ? "rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800" : "rounded-full bg-rose-100 px-3 py-1 text-xs font-black text-rose-800"}>{s.status.toUpperCase()}</span></div><p className="mt-1 text-xs text-slate-500">{fmt(s.savedAt)}</p>{s.record && <p className="mt-2 text-sm text-slate-700">{s.record.patient || "-"} | {auDate(s.record.dispenseDate) || "-"} | {s.record.medicine || "-"}</p>}</article>)}</div></section>
     <footer className="rounded-3xl bg-white/10 p-4 text-center"><input type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" disabled={uploadState.active} onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.currentTarget.value = ""; }} className="block w-full rounded-2xl bg-white p-4 text-sm font-black text-slate-950 file:mr-4 file:rounded-full file:border-0 file:bg-emerald-600 file:px-5 file:py-3 file:font-black file:text-white disabled:opacity-50" />{uploadState.active && <div className="mt-4 rounded-2xl bg-white p-4 text-left text-slate-950"><div className="flex items-center justify-between text-sm font-black"><span>{uploadState.label}</span><span>{uploadState.percent}%</span></div><div className="mt-3 h-3 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-emerald-600 transition-all" style={{ width: `${uploadState.percent}%` }} /></div></div>}{batches.length > 0 && <p className="mt-3 text-sm text-slate-300">Last upload: Scripts from {batches[0].from} to {batches[0].to} uploaded. Master total: {batches[0].total}</p>}<div>{batches.length > 0 && <button onClick={clearMaster} className="mt-3 text-xs font-bold text-rose-300">Clear uploaded FRED master</button>}</div></footer>
   </section></main>;
 }
