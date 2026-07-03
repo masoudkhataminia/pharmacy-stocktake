@@ -11,6 +11,8 @@ type RawRow = Record<string, string>;
 type RxManual = { patient: string; date: string; medicine: string; medicare: string };
 type TableMode = "matched" | "unmatchedLabels" | "unmatchedPrescriptions";
 type ScannerControls = { stop: () => void };
+type ReviewRow = Record<string, string>;
+type RecentItem = { kind: "Label" | "Prescription"; title: string; subtitle: string; time: string };
 
 const DB = "pharmacy-verification-db";
 const SCRIPT_KEY = "fred-master-scripts-v3";
@@ -64,7 +66,6 @@ async function idbDel(key: string) {
     req.onerror = () => resolve();
   });
 }
-
 function pick(row: RawRow, keys: string[]) {
   const entries = Object.entries(row);
   const exact = entries.find(([k]) => keys.includes(k.toLowerCase().trim()));
@@ -161,7 +162,7 @@ function csvCell(value: unknown) {
   const text = String(value ?? "");
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
-function downloadCsv(fileName: string, rows: Record<string, unknown>[]) {
+function downloadCsv(fileName: string, rows: ReviewRow[]) {
   if (rows.length === 0) return;
   const headers = Object.keys(rows[0]);
   const csv = [headers.join(","), ...rows.map((row) => headers.map((header) => csvCell(row[header])).join(","))].join("\n");
@@ -188,10 +189,20 @@ export default function Home() {
   const [cameraOn, setCameraOn] = useState(false);
   const [scannerBusy, setScannerBusy] = useState(false);
   const [last, setLast] = useState<Scan | null>(null);
-  const [message, setMessage] = useState("One live scanner: scan labels automatically, or press Scan prescription for AI detection.");
+  const [message, setMessage] = useState("Start scanner. Barcode = label. No barcode = prescription AI scan.");
+  const [toast, setToast] = useState("");
+  const [flash, setFlash] = useState(false);
   const [uploadState, setUploadState] = useState({ active: false, percent: 0, label: "" });
   const [rxManual, setRxManual] = useState<RxManual>({ patient: "", date: "", medicine: "", medicare: "" });
   const [tableMode, setTableMode] = useState<TableMode>("matched");
+
+  function notify(text: string) {
+    setToast(text);
+    setMessage(text);
+    setFlash(true);
+    window.setTimeout(() => setFlash(false), 850);
+    window.setTimeout(() => setToast(""), 2600);
+  }
 
   useEffect(() => {
     void (async () => {
@@ -224,7 +235,7 @@ export default function Home() {
     return scripts.filter((script) => (!p || norm(script.patient).includes(p)) && (!m || norm(script.medicine).includes(m)) && (!mc || dig(script.medicare).includes(mc)) && (!dt || dig(auDate(script.dispenseDate)).includes(dt) || dig(script.dispenseDate).includes(dt))).slice(0, 12);
   }, [scripts, rxManual]);
 
-  const tableRows = useMemo(() => {
+  const tableRows = useMemo<ReviewRow[]>(() => {
     if (tableMode === "matched") return matchedLabels.map((scan) => {
       const scriptNo = scan.record?.scriptNumber || "";
       const rx = prescriptions.find((p) => p.scriptNumber === scriptNo);
@@ -234,13 +245,19 @@ export default function Home() {
     return unmatchedPrescriptions.map((rx) => ({ Status: "UNMATCHED_PRESCRIPTION", Label: "", Script: rx.scriptNumber || "", Patient: rx.patient, Date: rx.date, Medicine: rx.medicine, Medicare: rx.medicare, LabelTime: "", PrescriptionTime: fmt(rx.savedAt) }));
   }, [tableMode, matchedLabels, unmatchedLabels, unmatchedPrescriptions, prescriptions]);
 
+  const recentItems = useMemo<RecentItem[]>(() => {
+    const labelItems: RecentItem[] = scans.map((s) => ({ kind: "Label", title: s.value, subtitle: s.record ? `${s.record.patient || "-"} | ${auDate(s.record.dispenseDate) || "-"}` : "No FRED match yet", time: s.savedAt }));
+    const rxItems: RecentItem[] = prescriptions.map((p) => ({ kind: "Prescription", title: p.scriptNumber || p.patient || "Prescription saved", subtitle: `${p.patient || "-"} | ${p.date || "-"} | ${p.medicine || "-"}`, time: p.savedAt }));
+    return [...labelItems, ...rxItems].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()).slice(0, 3);
+  }, [scans, prescriptions]);
+
   async function upload(file: File) {
     setUploadState({ active: true, percent: 5, label: `Selected ${file.name}` });
     await sleep(40);
     try {
       setUploadState({ active: true, percent: 25, label: "Reading FRED Excel..." });
       const incoming = await parseFredFile(file);
-      if (incoming.length === 0) { setUploadState({ active: false, percent: 0, label: "" }); setMessage("No script rows found. This must be the FRED List of Scripts export with Script Number."); return; }
+      if (incoming.length === 0) { setUploadState({ active: false, percent: 0, label: "" }); notify("No script rows found in FRED export."); return; }
       const map = new Map(scripts.map((r) => [r.scriptNumber, r]));
       let updated = 0;
       for (const rec of incoming) { if (!rec.scriptNumber) continue; if (map.has(rec.scriptNumber)) updated += 1; map.set(rec.scriptNumber, rec); }
@@ -250,10 +267,10 @@ export default function Home() {
       setUploadState({ active: true, percent: 90, label: "Saving master..." });
       await idbSet(SCRIPT_KEY, merged); await idbSet(BATCH_KEY, [batch, ...batches]);
       setScripts(merged); setBatches((old) => [batch, ...old]);
-      setMessage(`Scripts from ${fileRange.from || "?"} to ${fileRange.to || "?"} uploaded. Master total: ${merged.length}.`);
+      notify(`FRED uploaded: ${fileRange.from || "?"} to ${fileRange.to || "?"}. Total ${merged.length}.`);
       setUploadState({ active: true, percent: 100, label: `Uploaded. Master total ${merged.length}.` });
       window.setTimeout(() => setUploadState({ active: false, percent: 0, label: "" }), 1600);
-    } catch (e) { setUploadState({ active: false, percent: 0, label: "" }); setMessage(e instanceof Error ? `Upload failed: ${e.message}` : "Upload failed."); }
+    } catch (e) { setUploadState({ active: false, percent: 0, label: "" }); notify(e instanceof Error ? `Upload failed: ${e.message}` : "Upload failed."); }
   }
   async function startScanner() {
     if (!videoRef.current) return;
@@ -268,7 +285,7 @@ export default function Home() {
         const val = cleanLabel(raw);
         if (val) {
           setDetected((old) => {
-            if (old !== val) setMessage(raw !== val ? `Label detected and cleaned: ${raw} → ${val}. Press Confirm label.` : `Label detected: ${val}. Press Confirm label.`);
+            if (old !== val) setMessage(raw !== val ? `Label detected and cleaned: ${raw} → ${val}` : `Label detected: ${val}`);
             return val;
           });
           setManual("");
@@ -276,34 +293,45 @@ export default function Home() {
       });
       zxingControlsRef.current = controls;
       setCameraOn(true);
-      setMessage("Scanner ready. Barcode numbers are cleaned automatically. For prescriptions, point at the paper and press Scan prescription.");
+      setMessage("Scanner ready. Use one Save button: barcode saves label; no barcode scans prescription with AI.");
     } catch {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
         streamRef.current = stream;
         videoRef.current.srcObject = stream;
         setCameraOn(true);
-        setMessage("Camera opened, but barcode decoder failed. Use manual label or Scan prescription.");
-      } catch { setMessage("Camera permission denied or no camera found."); }
+        setMessage("Camera opened, but barcode decoder failed. You can still use Save current scan for prescription AI or manual label.");
+      } catch { notify("Camera permission denied or no camera found."); }
     }
   }
   function stopScanner() { zxingControlsRef.current?.stop(); zxingControlsRef.current = null; streamRef.current?.getTracks().forEach((t) => t.stop()); streamRef.current = null; setCameraOn(false); }
-  function confirmLabel() {
-    const v = cleanLabel(value); if (!v) return;
+  function saveLabel() {
+    const v = cleanLabel(value); if (!v) return false;
     const rec = findScript(scripts, v);
+    const already = scans.some((s) => norm(s.value) === norm(v));
     const scan: Scan = { value: v, savedAt: new Date().toISOString(), status: rec ? "matched" : "unmatched", record: rec };
     setScans((old) => [scan, ...old.filter((s) => norm(s.value) !== norm(v))]);
-    setLast(scan); setManual(""); setDetected(""); setMessage(rec ? `${v} label saved. It stays unmatched until the prescription is scanned/selected.` : `${v} label saved as unmatched.`);
+    setLast(scan); setManual(""); setDetected("");
+    notify(already ? `Duplicate label updated: ${v}` : rec ? `Label saved: ${v} | ${rec.patient || "patient found"}` : `Label saved as unmatched: ${v}`);
+    return true;
   }
   function savePrescriptionEntry(entry: Omit<PrescriptionEntry, "id" | "savedAt">) {
+    const duplicateKey = entry.scriptNumber ? `script:${entry.scriptNumber}` : `free:${norm(entry.patient)}:${dig(entry.date)}:${norm(entry.medicine)}:${dig(entry.medicare)}`;
+    const already = prescriptions.some((p) => {
+      const key = p.scriptNumber ? `script:${p.scriptNumber}` : `free:${norm(p.patient)}:${dig(p.date)}:${norm(p.medicine)}:${dig(p.medicare)}`;
+      return key === duplicateKey;
+    });
     const next: PrescriptionEntry = { ...entry, id: id(), savedAt: new Date().toISOString() };
-    setPrescriptions((old) => [next, ...old.filter((p) => !(next.scriptNumber && p.scriptNumber === next.scriptNumber))]);
-    setMessage(next.scriptNumber ? `Prescription saved for script ${next.scriptNumber}. If matching label exists, it moved to Matched.` : "Prescription saved as unmatched until its label is scanned.");
+    setPrescriptions((old) => [next, ...old.filter((p) => {
+      const key = p.scriptNumber ? `script:${p.scriptNumber}` : `free:${norm(p.patient)}:${dig(p.date)}:${norm(p.medicine)}:${dig(p.medicare)}`;
+      return key !== duplicateKey;
+    })]);
+    notify(already ? `Duplicate prescription updated: ${next.scriptNumber || next.patient || "no script number"}` : next.scriptNumber ? `Prescription saved: script ${next.scriptNumber} | ${next.patient || "patient"}` : `Prescription saved as unmatched: ${next.patient || "no patient"}`);
   }
   async function scanPrescriptionWithAi() {
-    if (!videoRef.current) { setMessage("Start scanner first."); return; }
+    if (!videoRef.current || !cameraOn) { notify("Start scanner first."); return; }
     setScannerBusy(true);
-    setMessage("AI is reading this prescription now. Hold the paper steady for a moment...");
+    setMessage("AI is reading this prescription now. Hold the paper steady...");
     try {
       const video = videoRef.current;
       const canvas = document.createElement("canvas");
@@ -317,29 +345,36 @@ export default function Home() {
       const data = await response.json();
       if (!data.ok) throw new Error(data.error || "AI detection failed");
       const r = data.result || {};
-      const rec = r.scriptNumber ? findScript(scripts, cleanLabel(r.scriptNumber)) : undefined;
-      const entry = { source: "scanner" as const, scriptNumber: rec?.scriptNumber || cleanLabel(r.scriptNumber) || undefined, patient: rec?.patient || r.patient || "", date: auDate(rec?.dispenseDate || r.date || ""), medicine: rec?.medicine || r.medicine || "", medicare: rec?.medicare || r.medicare || "" };
+      const cleanScript = cleanLabel(r.scriptNumber);
+      const rec = cleanScript ? findScript(scripts, cleanScript) : undefined;
+      const entry = { source: "scanner" as const, scriptNumber: rec?.scriptNumber || cleanScript || undefined, patient: rec?.patient || r.patient || "", date: auDate(rec?.dispenseDate || r.date || ""), medicine: rec?.medicine || r.medicine || "", medicare: rec?.medicare || r.medicare || "" };
       setRxManual({ patient: entry.patient, date: entry.date, medicine: entry.medicine, medicare: entry.medicare });
       savePrescriptionEntry(entry);
-    } catch (e) { setMessage(e instanceof Error ? `AI prescription scan failed: ${e.message}` : "AI prescription scan failed."); }
+    } catch (e) { notify(e instanceof Error ? `AI prescription scan failed: ${e.message}` : "AI prescription scan failed."); }
     finally { setScannerBusy(false); }
+  }
+  function saveCurrentScan() {
+    if (value.trim()) { saveLabel(); return; }
+    void scanPrescriptionWithAi();
   }
   function saveManualPrescription() { savePrescriptionEntry({ source: "manual", patient: rxManual.patient.trim(), date: rxManual.date.trim(), medicine: rxManual.medicine.trim(), medicare: rxManual.medicare.trim() }); }
   function selectPrescription(script: ScriptRec) {
     const entry = { source: "fred-search" as const, scriptNumber: script.scriptNumber, patient: script.patient, date: auDate(script.dispenseDate), medicine: script.medicine, medicare: script.medicare || "" };
     setRxManual({ patient: entry.patient, date: entry.date, medicine: entry.medicine, medicare: entry.medicare }); savePrescriptionEntry(entry);
   }
-  function clearScans() { setScans([]); setLast(null); void idbDel(SCAN_KEY); }
-  function clearPrescriptions() { setPrescriptions([]); void idbDel(PRESCRIPTION_KEY); }
-  function clearMaster() { setScripts([]); setBatches([]); void idbDel(SCRIPT_KEY); void idbDel(BATCH_KEY); setMessage("FRED master cleared."); }
+  function clearScans() { setScans([]); setLast(null); void idbDel(SCAN_KEY); notify("Label scans cleared."); }
+  function clearPrescriptions() { setPrescriptions([]); void idbDel(PRESCRIPTION_KEY); notify("Prescriptions cleared."); }
+  function clearMaster() { setScripts([]); setBatches([]); void idbDel(SCRIPT_KEY); void idbDel(BATCH_KEY); notify("FRED master cleared."); }
 
   return <main className="min-h-screen bg-slate-950 px-4 py-4 text-slate-100 sm:px-6 lg:px-8"><section className="mx-auto flex max-w-7xl flex-col gap-4">
+    {toast && <div className="fixed inset-x-4 top-5 z-50 mx-auto max-w-xl rounded-3xl bg-emerald-600 px-5 py-4 text-center text-lg font-black text-white shadow-2xl ring-4 ring-emerald-200">✓ {toast}</div>}
     <header className="rounded-3xl border border-white/10 bg-white/10 p-5 shadow-2xl"><p className="text-xs font-bold uppercase tracking-[0.3em] text-emerald-300">Pharmacy Verification</p><h1 className="mt-2 text-2xl font-black text-white sm:text-4xl">Single live scanner</h1><p className="mt-3 text-sm leading-7 text-slate-300">{scripts.length ? `Scripts from ${masterRange.from} to ${masterRange.to}` : "Upload FRED file at the bottom."}</p><p className="mt-2 rounded-2xl bg-white/10 p-3 text-sm font-bold text-slate-200">{message}</p></header>
     <section className="grid gap-3 sm:grid-cols-4"><button onClick={() => setTableMode("unmatchedLabels")} className="rounded-2xl bg-white p-4 text-left text-slate-950"><p className="text-2xl font-black">{scans.length}</p><p className="text-xs text-slate-500">Saved labels</p></button><button onClick={() => setTableMode("matched")} className="rounded-2xl bg-emerald-100 p-4 text-left text-emerald-950"><p className="text-2xl font-black">{matchedLabels.length}</p><p className="text-xs">Matched pairs</p></button><button onClick={() => setTableMode("unmatchedLabels")} className="rounded-2xl bg-amber-100 p-4 text-left text-amber-950"><p className="text-2xl font-black">{unmatchedLabels.length + unmatchedPrescriptions.length}</p><p className="text-xs">Unmatched work items</p></button><button onClick={() => setTableMode("unmatchedPrescriptions")} className="rounded-2xl bg-white/10 p-4 text-left text-white"><p className="text-2xl font-black">{prescriptions.length}</p><p className="text-xs text-slate-400">Saved prescriptions</p></button></section>
-    <section className="rounded-3xl bg-gradient-to-br from-emerald-50 to-white p-4 text-slate-950 shadow-xl ring-1 ring-emerald-200"><h2 className="mb-3 text-xl font-black">Live scanner — label + prescription</h2><div className="grid gap-4 lg:grid-cols-[320px_1fr]"><div><div className="relative overflow-hidden rounded-3xl border-2 border-emerald-400 bg-slate-100 shadow-inner"><video ref={videoRef} className="h-52 w-full object-cover" autoPlay muted playsInline /><div className="pointer-events-none absolute inset-x-10 top-1/2 h-16 -translate-y-1/2 rounded-2xl border-4 border-white/80 shadow-[0_0_0_9999px_rgba(15,23,42,0.10)]" /></div><div className="mt-3 grid grid-cols-2 gap-2"><button onClick={startScanner} className="rounded-2xl bg-emerald-600 px-4 py-3 font-black text-white shadow-sm">Start scanner</button><button onClick={stopScanner} className="rounded-2xl border bg-white px-4 py-3 font-bold shadow-sm">Stop</button></div></div><div className="flex flex-col gap-3"><div className="rounded-3xl bg-white p-4 shadow-sm"><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Detected label / script number</p><p className="mt-2 min-h-10 break-all text-3xl font-black">{value || "Waiting for label barcode..."}</p></div><div className="grid gap-2 sm:grid-cols-2"><button onClick={confirmLabel} disabled={!value.trim()} className="rounded-3xl bg-emerald-600 px-6 py-4 text-lg font-black text-white shadow-sm disabled:opacity-40">Confirm label</button><button onClick={scanPrescriptionWithAi} disabled={!cameraOn || scannerBusy} className="rounded-3xl bg-slate-950 px-6 py-4 text-lg font-black text-white shadow-sm disabled:opacity-40">{scannerBusy ? "AI reading..." : "Scan prescription"}</button></div>{preview?.record && <div className="rounded-3xl bg-white p-4 text-sm shadow-sm"><p className="font-black text-emerald-800">FRED lookup found</p><p><strong>Patient:</strong> {preview.record.patient}</p><p><strong>Date:</strong> {auDate(preview.record.dispenseDate)}</p><p><strong>Medicine:</strong> {preview.record.medicine}</p><p><strong>Script:</strong> {preview.record.scriptNumber}</p></div>}</div></div></section>
-    <details className="rounded-3xl bg-white p-4 text-slate-950 shadow-xl"><summary className="cursor-pointer text-lg font-black">Manual label fallback</summary><div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]"><input value={manual} onChange={(e) => { setManual(cleanLabel(e.target.value)); setDetected(""); }} onKeyDown={(e) => { if (e.key === "Enter") confirmLabel(); }} placeholder="Type script / label number manually" className="rounded-2xl border-2 px-4 py-4 text-xl font-black" /><button onClick={confirmLabel} disabled={!value.trim()} className="rounded-2xl bg-slate-950 px-6 py-4 font-black text-white disabled:opacity-40">Confirm</button></div></details>
-    <details className="rounded-3xl bg-white p-4 text-slate-950 shadow-xl" open><summary className="cursor-pointer text-lg font-black">Manual prescription entry / live search</summary><div className="relative mt-4 grid gap-3 sm:grid-cols-4"><input value={rxManual.patient} onChange={(e) => setRxManual({ ...rxManual, patient: e.target.value })} placeholder="Patient name" className="rounded-2xl border-2 px-4 py-3 font-bold" /><input value={rxManual.date} onChange={(e) => setRxManual({ ...rxManual, date: e.target.value })} placeholder="Prescription date" className="rounded-2xl border-2 px-4 py-3 font-bold" /><input value={rxManual.medicine} onChange={(e) => setRxManual({ ...rxManual, medicine: e.target.value })} placeholder="Medicine" className="rounded-2xl border-2 px-4 py-3 font-bold" /><input value={rxManual.medicare} onChange={(e) => setRxManual({ ...rxManual, medicare: e.target.value })} placeholder="Medicare number" className="rounded-2xl border-2 px-4 py-3 font-bold" /></div><button onClick={saveManualPrescription} disabled={!rxManual.patient && !rxManual.medicine && !rxManual.medicare} className="mt-3 rounded-2xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-40">Save prescription as unmatched</button>{rxSuggestions.length > 0 && <div className="mt-3 max-h-80 overflow-auto rounded-3xl border bg-white p-3 shadow-xl"><p className="mb-2 text-sm font-black text-slate-600">Live FRED candidates — click the real original prescription</p>{rxSuggestions.map((script) => <button key={script.scriptNumber} onClick={() => selectPrescription(script)} className="mb-2 block w-full rounded-2xl border p-3 text-left hover:bg-emerald-50"><div className="flex flex-wrap items-center justify-between gap-2"><strong>Script {script.scriptNumber}</strong><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black">{auDate(script.dispenseDate)}</span></div><p className="mt-1 text-sm"><strong>{script.patient}</strong> | {script.medicine}</p>{script.medicare && <p className="mt-1 text-xs text-slate-500">Medicare: {script.medicare}</p>}</button>)}</div>}<p className="mt-3 rounded-2xl bg-slate-100 p-3 text-sm font-bold text-slate-700">A prescription entry is only created when you save/select it or when AI scanner reads it. It stays unmatched until the matching label is saved.</p></details>
-    <section className="rounded-3xl bg-white p-5 text-slate-950 shadow-xl"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-black">Review table</h2><p className="text-sm text-slate-600">{tableMode === "matched" ? "matched label + prescription pairs" : tableMode === "unmatchedLabels" ? "saved labels without saved prescription" : "saved prescriptions without saved label"}</p></div><button onClick={() => downloadCsv(`${tableMode}-pharmacy-verification.csv`, tableRows)} disabled={tableRows.length === 0} className="rounded-full bg-slate-950 px-5 py-3 text-sm font-black text-white disabled:opacity-40">Export table to Excel CSV</button></div><div className="mt-4 flex flex-wrap gap-2"><button onClick={() => setTableMode("matched")} className="rounded-full border px-4 py-2 text-sm font-black">Matched</button><button onClick={() => setTableMode("unmatchedLabels")} className="rounded-full border px-4 py-2 text-sm font-black">Unmatched labels</button><button onClick={() => setTableMode("unmatchedPrescriptions")} className="rounded-full border px-4 py-2 text-sm font-black">Unmatched prescriptions</button><button onClick={clearPrescriptions} className="rounded-full border border-rose-200 px-4 py-2 text-sm font-black text-rose-700">Clear prescriptions</button></div><div className="mt-4 max-h-[520px] overflow-auto rounded-2xl border"><table className="w-full min-w-[900px] text-left text-sm"><thead className="sticky top-0 bg-slate-100"><tr>{["Status", "Label", "Script", "Patient", "Date", "Medicine", "Medicare", "LabelTime", "PrescriptionTime"].map((h) => <th key={h} className="p-3 font-black">{h}</th>)}</tr></thead><tbody>{tableRows.length === 0 ? <tr><td colSpan={9} className="p-5 text-center text-slate-500">No rows in this view.</td></tr> : tableRows.map((row, index) => <tr key={index} className="border-t"><td className="p-3 font-black">{row.Status}</td><td className="p-3">{row.Label}</td><td className="p-3">{row.Script}</td><td className="p-3">{row.Patient}</td><td className="p-3">{row.Date}</td><td className="p-3">{row.Medicine}</td><td className="p-3">{row.Medicare}</td><td className="p-3">{row.LabelTime}</td><td className="p-3">{row.PrescriptionTime}</td></tr>)}</tbody></table></div><div className="mt-4 flex justify-end"><button onClick={clearScans} className="rounded-full border border-rose-200 px-4 py-2 text-sm font-bold text-rose-700">Clear label scans</button></div></section>
-    <footer className="rounded-3xl bg-white/10 p-4 text-center"><input type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" disabled={uploadState.active} onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.currentTarget.value = ""; }} className="block w-full rounded-2xl bg-white p-4 text-sm font-black text-slate-950 file:mr-4 file:rounded-full file:border-0 file:bg-emerald-600 file:px-5 file:py-3 file:font-black file:text-white disabled:opacity-50" />{uploadState.active && <div className="mt-4 rounded-2xl bg-white p-4 text-left text-slate-950"><div className="flex items-center justify-between text-sm font-black"><span>{uploadState.label}</span><span>{uploadState.percent}%</span></div><div className="mt-3 h-3 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-emerald-600 transition-all" style={{ width: `${uploadState.percent}%` }} /></div></div>}{batches.length > 0 && <p className="mt-3 text-sm text-slate-300">Last upload: Scripts from {batches[0].from} to {batches[0].to} uploaded. Master total: {batches[0].total}</p>}<div>{batches.length > 0 && <button onClick={clearMaster} className="mt-3 text-xs font-bold text-rose-300">Clear uploaded FRED master</button>}</div></footer>
+    <section className="rounded-3xl bg-white p-4 text-slate-950 shadow-xl"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-black">{tableMode === "matched" ? "Matched pairs" : tableMode === "unmatchedLabels" ? "Unmatched labels" : "Unmatched prescriptions"}</h2><p className="text-sm text-slate-500">Tap top cards to switch list. FRED master is not shown here.</p></div><button onClick={() => downloadCsv(`${tableMode}-pharmacy-verification.csv`, tableRows)} disabled={tableRows.length === 0} className="rounded-full bg-slate-950 px-5 py-3 text-sm font-black text-white disabled:opacity-40">Export CSV</button></div><div className="mt-4 max-h-72 overflow-auto rounded-2xl border"><table className="w-full min-w-[780px] text-left text-sm"><thead className="sticky top-0 bg-slate-100"><tr>{["Status", "Label", "Script", "Patient", "Date", "Medicine", "LabelTime", "PrescriptionTime"].map((h) => <th key={h} className="p-3 font-black">{h}</th>)}</tr></thead><tbody>{tableRows.length === 0 ? <tr><td colSpan={8} className="p-5 text-center text-slate-500">No rows yet.</td></tr> : tableRows.map((row, index) => <tr key={index} className="border-t"><td className="p-3 font-black">{row.Status}</td><td className="p-3">{row.Label}</td><td className="p-3">{row.Script}</td><td className="p-3">{row.Patient}</td><td className="p-3">{row.Date}</td><td className="p-3">{row.Medicine}</td><td className="p-3">{row.LabelTime}</td><td className="p-3">{row.PrescriptionTime}</td></tr>)}</tbody></table></div></section>
+    <section className={`rounded-3xl bg-gradient-to-br from-emerald-50 to-white p-4 text-slate-950 shadow-xl ring-2 transition-all duration-300 ${flash ? "ring-emerald-500 shadow-emerald-300/60" : "ring-emerald-200"}`}><h2 className="mb-3 text-xl font-black">Live scanner</h2><div className="grid gap-4 lg:grid-cols-[320px_1fr]"><div><div className={`relative overflow-hidden rounded-3xl border-2 bg-slate-100 shadow-inner transition-all ${flash ? "border-emerald-500" : "border-emerald-300"}`}><video ref={videoRef} className="h-52 w-full object-cover" autoPlay muted playsInline /><div className="pointer-events-none absolute inset-x-10 top-1/2 h-16 -translate-y-1/2 rounded-2xl border-4 border-white/80 shadow-[0_0_0_9999px_rgba(15,23,42,0.10)]" /></div><div className="mt-3 grid grid-cols-2 gap-2"><button onClick={startScanner} className="rounded-2xl bg-emerald-600 px-4 py-3 font-black text-white shadow-sm">Start</button><button onClick={stopScanner} className="rounded-2xl border bg-white px-4 py-3 font-bold shadow-sm">Stop</button></div></div><div className="flex flex-col gap-3"><div className="rounded-3xl bg-white p-4 shadow-sm"><p className="text-xs font-bold uppercase tracking-widest text-slate-500">Detected label / script number</p><p className="mt-2 min-h-10 break-all text-3xl font-black">{value || "No barcode detected"}</p></div><button onClick={saveCurrentScan} disabled={scannerBusy || (!cameraOn && !value.trim())} className="rounded-3xl bg-slate-950 px-6 py-5 text-xl font-black text-white shadow-sm disabled:opacity-40">{scannerBusy ? "Saving..." : value ? "Save current label" : "Save current scan"}</button>{preview?.record && <div className="rounded-3xl bg-white p-4 text-sm shadow-sm"><p className="font-black text-emerald-800">FRED lookup found</p><p><strong>Patient:</strong> {preview.record.patient}</p><p><strong>Date:</strong> {auDate(preview.record.dispenseDate)}</p><p><strong>Medicine:</strong> {preview.record.medicine}</p><p><strong>Script:</strong> {preview.record.scriptNumber}</p></div>}</div></div></section>
+    <section className="rounded-3xl bg-white p-4 text-slate-950 shadow-xl"><h2 className="text-lg font-black">Last 3 saved items</h2><div className="mt-3 grid gap-2">{recentItems.length === 0 ? <p className="rounded-2xl bg-slate-100 p-4 text-sm font-bold text-slate-500">Nothing saved yet.</p> : recentItems.map((item) => <div key={`${item.kind}-${item.time}-${item.title}`} className="rounded-2xl border p-3"><div className="flex items-center justify-between gap-2"><strong>{item.kind}: {item.title}</strong><span className="text-xs text-slate-500">{fmt(item.time)}</span></div><p className="mt-1 text-sm text-slate-600">{item.subtitle}</p></div>)}</div></section>
+    <details className="rounded-3xl bg-white p-4 text-slate-950 shadow-xl"><summary className="cursor-pointer text-lg font-black">Manual label fallback</summary><div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]"><input value={manual} onChange={(e) => { setManual(cleanLabel(e.target.value)); setDetected(""); }} onKeyDown={(e) => { if (e.key === "Enter") saveLabel(); }} placeholder="Type script / label number manually" className="rounded-2xl border-2 px-4 py-4 text-xl font-black" /><button onClick={saveLabel} disabled={!value.trim()} className="rounded-2xl bg-slate-950 px-6 py-4 font-black text-white disabled:opacity-40">Save label</button></div></details>
+    <details className="rounded-3xl bg-white p-4 text-slate-950 shadow-xl"><summary className="cursor-pointer text-lg font-black">Manual prescription / live search</summary><div className="relative mt-4 grid gap-3 sm:grid-cols-4"><input value={rxManual.patient} onChange={(e) => setRxManual({ ...rxManual, patient: e.target.value })} placeholder="Patient name" className="rounded-2xl border-2 px-4 py-3 font-bold" /><input value={rxManual.date} onChange={(e) => setRxManual({ ...rxManual, date: e.target.value })} placeholder="Prescription date" className="rounded-2xl border-2 px-4 py-3 font-bold" /><input value={rxManual.medicine} onChange={(e) => setRxManual({ ...rxManual, medicine: e.target.value })} placeholder="Medicine" className="rounded-2xl border-2 px-4 py-3 font-bold" /><input value={rxManual.medicare} onChange={(e) => setRxManual({ ...rxManual, medicare: e.target.value })} placeholder="Medicare number" className="rounded-2xl border-2 px-4 py-3 font-bold" /></div><button onClick={saveManualPrescription} disabled={!rxManual.patient && !rxManual.medicine && !rxManual.medicare} className="mt-3 rounded-2xl bg-slate-950 px-5 py-3 font-black text-white disabled:opacity-40">Save prescription</button>{rxSuggestions.length > 0 && <div className="mt-3 max-h-80 overflow-auto rounded-3xl border bg-white p-3 shadow-xl"><p className="mb-2 text-sm font-black text-slate-600">Live FRED candidates</p>{rxSuggestions.map((script) => <button key={script.scriptNumber} onClick={() => selectPrescription(script)} className="mb-2 block w-full rounded-2xl border p-3 text-left hover:bg-emerald-50"><div className="flex flex-wrap items-center justify-between gap-2"><strong>Script {script.scriptNumber}</strong><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black">{auDate(script.dispenseDate)}</span></div><p className="mt-1 text-sm"><strong>{script.patient}</strong> | {script.medicine}</p></button>)}</div>}</details>
+    <footer className="rounded-3xl bg-white/10 p-4 text-center"><input type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" disabled={uploadState.active} onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.currentTarget.value = ""; }} className="block w-full rounded-2xl bg-white p-4 text-sm font-black text-slate-950 file:mr-4 file:rounded-full file:border-0 file:bg-emerald-600 file:px-5 file:py-3 file:font-black file:text-white disabled:opacity-50" />{uploadState.active && <div className="mt-4 rounded-2xl bg-white p-4 text-left text-slate-950"><div className="flex items-center justify-between text-sm font-black"><span>{uploadState.label}</span><span>{uploadState.percent}%</span></div><div className="mt-3 h-3 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-emerald-600 transition-all" style={{ width: `${uploadState.percent}%` }} /></div></div>}{batches.length > 0 && <p className="mt-3 text-sm text-slate-300">Last upload: Scripts from {batches[0].from} to {batches[0].to} uploaded. Master total: {batches[0].total}</p>}<div className="mt-3 flex justify-center gap-3">{batches.length > 0 && <button onClick={clearMaster} className="text-xs font-bold text-rose-300">Clear FRED master</button>}<button onClick={clearScans} className="text-xs font-bold text-rose-300">Clear labels</button><button onClick={clearPrescriptions} className="text-xs font-bold text-rose-300">Clear prescriptions</button></div></footer>
   </section></main>;
 }
