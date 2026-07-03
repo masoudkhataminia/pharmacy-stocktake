@@ -55,10 +55,11 @@ export async function POST(request: NextRequest) {
   const fallback = safeFallback(headers);
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return NextResponse.json({ ok: true, source: "fallback", map: fallback });
+    return NextResponse.json({ ok: true, source: "fallback", model: "none", map: fallback });
   }
 
   try {
+    const model = process.env.OPENAI_COLUMN_MODEL || process.env.OPENAI_MODEL || "gpt-5.1";
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_COLUMN_MODEL || "gpt-4o-mini",
+        model,
         temperature: 0,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
@@ -77,7 +78,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!response.ok) {
-      return NextResponse.json({ ok: true, source: "fallback", map: fallback, aiError: await response.text() });
+      return NextResponse.json({ ok: true, source: "fallback", model, map: fallback, aiError: await response.text() });
     }
 
     const data = await response.json();
@@ -88,6 +89,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       source: "ai",
+      model,
       map: { ...fallback, ...aiMap },
     });
   } catch (error) {
