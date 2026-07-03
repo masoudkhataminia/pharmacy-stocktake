@@ -7,13 +7,10 @@ type ScriptRec = { scriptNumber: string; dispenseDate: string; patient: string; 
 type Scan = { value: string; savedAt: string; status: "matched" | "unmatched"; record?: ScriptRec };
 type PrescriptionEntry = { id: string; savedAt: string; source: "manual" | "fred-search" | "scanner"; scriptNumber?: string; patient: string; date: string; medicine: string; medicare: string };
 type Batch = { fileName: string; uploadedAt: string; from: string; to: string; imported: number; updated: number; total: number };
-type BarcodeResult = { rawValue: string };
-type Detector = { detect: (video: HTMLVideoElement) => Promise<BarcodeResult[]> };
 type RawRow = Record<string, string>;
 type RxManual = { patient: string; date: string; medicine: string; medicare: string };
 type TableMode = "matched" | "unmatchedLabels" | "unmatchedPrescriptions";
-
-declare global { interface Window { BarcodeDetector?: { new (options?: { formats?: string[] }): Detector } } }
+type ScannerControls = { stop: () => void };
 
 const DB = "pharmacy-verification-db";
 const SCRIPT_KEY = "fred-master-scripts-v3";
@@ -180,6 +177,7 @@ const fmt = (v: string) => new Intl.DateTimeFormat("en-AU", { dateStyle: "short"
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const zxingControlsRef = useRef<ScannerControls | null>(null);
   const [scripts, setScripts] = useState<ScriptRec[]>([]);
   const [scans, setScans] = useState<Scan[]>([]);
   const [prescriptions, setPrescriptions] = useState<PrescriptionEntry[]>([]);
@@ -207,21 +205,7 @@ export default function Home() {
   useEffect(() => { void idbSet(SCAN_KEY, scans); }, [scans]);
   useEffect(() => { void idbSet(PRESCRIPTION_KEY, prescriptions); }, [prescriptions]);
   useEffect(() => { void idbSet(BATCH_KEY, batches); }, [batches]);
-  useEffect(() => {
-    if (!cameraOn || !videoRef.current || !window.BarcodeDetector) return;
-    let off = false;
-    const detector = new window.BarcodeDetector({ formats: ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e", "qr_code"] });
-    const loop = async () => {
-      if (off || !videoRef.current) return;
-      try {
-        const val = (await detector.detect(videoRef.current))[0]?.rawValue?.trim();
-        if (val && val !== detected) { setDetected(val); setManual(""); setMessage(`Label detected: ${val}. Press Confirm label.`); }
-      } catch { setMessage("Camera is open. Barcode detector is not reliable in this browser; use manual label or Scan prescription."); }
-      setTimeout(loop, 300);
-    };
-    void loop();
-    return () => { off = true; };
-  }, [cameraOn, detected]);
+  useEffect(() => () => { zxingControlsRef.current?.stop(); streamRef.current?.getTracks().forEach((t) => t.stop()); }, []);
 
   const value = detected || manual;
   const current = useMemo(() => findScript(scripts, value), [scripts, value]);
@@ -271,15 +255,37 @@ export default function Home() {
     } catch (e) { setUploadState({ active: false, percent: 0, label: "" }); setMessage(e instanceof Error ? `Upload failed: ${e.message}` : "Upload failed."); }
   }
   async function startScanner() {
+    if (!videoRef.current) return;
+    stopScanner();
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
+      const [{ BrowserMultiFormatReader }, { BarcodeFormat, DecodeHintType }] = await Promise.all([import("@zxing/browser"), import("@zxing/library")]);
+      const hints = new Map();
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128, BarcodeFormat.CODE_39, BarcodeFormat.CODE_93, BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.ITF, BarcodeFormat.QR_CODE]);
+      const reader = new BrowserMultiFormatReader(hints);
+      const controls = await reader.decodeFromVideoDevice(undefined, videoRef.current, (result) => {
+        const val = result?.getText?.()?.trim();
+        if (val) {
+          setDetected((old) => {
+            if (old !== val) setMessage(`Label detected: ${val}. Press Confirm label.`);
+            return val;
+          });
+          setManual("");
+        }
+      });
+      zxingControlsRef.current = controls;
       setCameraOn(true);
-      setMessage("Scanner ready. Point at a label for auto barcode detection, or point at a prescription and press Scan prescription.");
-    } catch { setMessage("Camera permission denied or no camera found."); }
+      setMessage("ZXing scanner ready. Hold the barcode flat, close, and inside the rectangle.");
+    } catch {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+        streamRef.current = stream;
+        videoRef.current.srcObject = stream;
+        setCameraOn(true);
+        setMessage("Camera opened, but barcode decoder failed. Use manual label or Scan prescription.");
+      } catch { setMessage("Camera permission denied or no camera found."); }
+    }
   }
-  function stopScanner() { streamRef.current?.getTracks().forEach((t) => t.stop()); streamRef.current = null; setCameraOn(false); }
+  function stopScanner() { zxingControlsRef.current?.stop(); zxingControlsRef.current = null; streamRef.current?.getTracks().forEach((t) => t.stop()); streamRef.current = null; setCameraOn(false); }
   function confirmLabel() {
     const v = value.trim(); if (!v) return;
     const rec = findScript(scripts, v);
