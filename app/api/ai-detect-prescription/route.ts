@@ -1,23 +1,51 @@
 import { NextRequest, NextResponse } from "next/server";
 
+type ExtractedMedicine = {
+  medicine?: string;
+  labelNumber?: string;
+  quantity?: string;
+  repeats?: string;
+  directions?: string;
+  confidence?: number;
+};
+
 type ExtractedPrescription = {
   scriptNumber?: string;
   patient?: string;
+  address?: string;
   date?: string;
   medicine?: string;
+  medicines?: ExtractedMedicine[];
   medicare?: string;
   confidence?: number;
   notes?: string;
 };
 
-const SYSTEM_PROMPT = `You are extracting information from an Australian pharmacy prescription image.
+const SYSTEM_PROMPT = `You are extracting information from an Australian pharmacy prescription image, including printed and handwritten prescriptions.
 Return only valid compact JSON with these optional fields:
-scriptNumber, patient, date, medicine, medicare, confidence, notes.
-If text is unclear, leave the field blank and lower confidence.
-Never invent values. Use dd/mm/yyyy for dates when possible.`;
+scriptNumber, patient, address, date, medicare, confidence, notes, medicines.
+medicines must be an array. Each medicine item may contain: medicine, labelNumber, quantity, repeats, directions, confidence.
+Critical rules:
+- Do NOT put address text in patient. Patient must be a person name only.
+- If address is visible, put it in address only.
+- If the prescription has multiple medicines/items, return one object per medicine in medicines.
+- Each medicine item may later match one separate label/barcode, so do not merge multiple medicines into one string unless you cannot separate them.
+- For handwritten prescriptions, read carefully. If a word or number is unclear, leave that field blank and lower confidence.
+- Never invent values. Use dd/mm/yyyy for dates when possible.`;
 
 function sanitize(value: unknown) {
   return String(value ?? "").slice(0, 500).trim();
+}
+
+function sanitizeMedicine(item: ExtractedMedicine) {
+  return {
+    medicine: sanitize(item?.medicine),
+    labelNumber: sanitize(item?.labelNumber),
+    quantity: sanitize(item?.quantity),
+    repeats: sanitize(item?.repeats),
+    directions: sanitize(item?.directions),
+    confidence: Number(item?.confidence || 0),
+  };
 }
 
 function extractJson(text: string): ExtractedPrescription {
@@ -29,14 +57,22 @@ function extractJson(text: string): ExtractedPrescription {
 }
 
 function resultJson(parsed: ExtractedPrescription, model: string) {
+  const medicines = Array.isArray(parsed.medicines) && parsed.medicines.length > 0
+    ? parsed.medicines.map(sanitizeMedicine).filter((m) => m.medicine || m.labelNumber || m.directions)
+    : sanitize(parsed.medicine)
+      ? [{ medicine: sanitize(parsed.medicine), labelNumber: "", quantity: "", repeats: "", directions: "", confidence: Number(parsed.confidence || 0) }]
+      : [];
+
   return NextResponse.json({
     ok: true,
     model,
     result: {
       scriptNumber: sanitize(parsed.scriptNumber),
       patient: sanitize(parsed.patient),
+      address: sanitize(parsed.address),
       date: sanitize(parsed.date),
-      medicine: sanitize(parsed.medicine),
+      medicine: medicines.map((m) => m.medicine).filter(Boolean).join("; "),
+      medicines,
       medicare: sanitize(parsed.medicare),
       confidence: Number(parsed.confidence || 0),
       notes: sanitize(parsed.notes),
