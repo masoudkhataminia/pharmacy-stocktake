@@ -1,1 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Original Script Matcher</title>
+  <meta name="theme-color" content="#0f172a" />
+  <style>
+    :root{
+      --bg:#f8fafc;--panel:#ffffff;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;
+      --brand:#0f766e;--brand2:#14b8a6;--danger:#dc2626;--warn:#d97706;--ok:#15803d;
+      --soft:#ecfeff;--shadow:0 12px 30px rgba(15,23,42,.08);--r:18px;
+    }
+    *{box-sizing:border-box} html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+    button,input,select,textarea{font:inherit} button{cursor:pointer}
+    .app{min-height:100vh;display:grid;grid-template-columns:280px 1fr}
+    aside{background:#0f172a;color:white;padding:22px;position:sticky;top:0;height:100vh;overflow:auto}
+    .logo{display:flex;gap:12px;align-items:center;margin-bottom:22px}.logoMark{width:42px;height:42px;border-radius:13px;background:linear-gradient(135deg,var(--brand),var(--brand2));display:grid;place-items:center;font-weight:900}.logo h1{font-size:18px;margin:0}.logo p{margin:2px 0 0;color:#cbd5e1;font-size:12px}
+    nav{display:grid;gap:8px}.tabBtn{width:100%;background:transparent;color:#cbd5e1;border:1px solid transparent;border-radius:14px;padding:12px 13px;text-align:left;display:flex;gap:10px;align-items:center}.tabBtn.active{background:#1e293b;color:white;border-color:#334155}.tabBtn:hover{background:#182235}.pill{font-size:11px;background:#334155;color:#e2e8f0;border-radius:99px;padding:3px 8px;margin-left:auto}
+    main{padding:24px;max-width:1280px;width:100%;margin:0 auto}.topbar{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:18px}.topbar h2{font-size:26px;margin:0 0 5px}.topbar p{margin:0;color:var(--muted)}
+    .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:18px}.span4{grid-column:span 4}.span5{grid-column:span 5}.span6{grid-column:span 6}.span7{grid-column:span 7}.span8{grid-column:span 8}.span12{grid-column:span 12}
+    .card h3{margin:0 0 12px;font-size:18px}.muted{color:var(--muted)}.tiny{font-size:12px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.stack{display:grid;gap:12px}.field{display:grid;gap:6px}.field label{font-size:12px;color:#475569;font-weight:700}.input,textarea,select{width:100%;border:1px solid var(--line);border-radius:12px;padding:12px;background:#fff;color:var(--ink)}textarea{min-height:94px;resize:vertical}.btn{border:0;border-radius:13px;padding:11px 14px;background:#e2e8f0;color:#0f172a;font-weight:800}.btn.primary{background:var(--brand);color:white}.btn.danger{background:#fee2e2;color:#991b1b}.btn.warn{background:#fef3c7;color:#92400e}.btn.ghost{background:transparent;border:1px solid var(--line)}.btn:disabled{opacity:.45;cursor:not-allowed}
+    .status{border-radius:14px;padding:12px 14px;border:1px solid var(--line);background:#f8fafc}.status.ok{background:#f0fdf4;border-color:#bbf7d0;color:#14532d}.status.warn{background:#fffbeb;border-color:#fde68a;color:#78350f}.status.bad{background:#fef2f2;border-color:#fecaca;color:#7f1d1d}.status.info{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}
+    table{width:100%;border-collapse:collapse;font-size:13px}th,td{border-bottom:1px solid var(--line);padding:10px;text-align:left;vertical-align:top}th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#475569;background:#f8fafc;position:sticky;top:0}tbody tr:hover{background:#f8fafc}.tableWrap{max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:14px}
+    .cameraBox{position:relative;background:#020617;border-radius:20px;overflow:hidden;min-height:360px}.cameraBox video{width:100%;height:100%;object-fit:cover;display:block;min-height:360px}.scanOverlay{position:absolute;inset:0;pointer-events:none;background:linear-gradient(transparent 20%,rgba(20,184,166,.08) 20% 80%,transparent 80%)}.scanFrame{position:absolute;left:8%;right:8%;top:22%;bottom:22%;border:3px solid rgba(20,184,166,.9);border-radius:20px;box-shadow:0 0 0 9999px rgba(2,6,23,.28)}.scanHint{position:absolute;left:12px;right:12px;bottom:12px;background:rgba(15,23,42,.78);color:white;border-radius:14px;padding:10px;font-size:12px}
+    .resultCard{border:1px solid var(--line);border-radius:18px;padding:14px;background:#fff}.bigNumber{font-size:34px;line-height:1;font-weight:900;letter-spacing:.02em}.confidence{height:9px;background:#e2e8f0;border-radius:99px;overflow:hidden}.confidence > div{height:100%;background:linear-gradient(90deg,#f59e0b,#14b8a6);width:0%}.chip{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:800;background:#e2e8f0;color:#334155}.chip.ok{background:#dcfce7;color:#166534}.chip.warn{background:#fef3c7;color:#92400e}.chip.bad{background:#fee2e2;color:#991b1b}.chip.info{background:#dbeafe;color:#1e40af}
+    .hidden{display:none!important}.footerNote{margin-top:20px;color:var(--muted);font-size:12px}.kpi{display:grid;gap:4px}.kpi strong{font-size:26px}.kpi span{font-size:12px;color:var(--muted)}
+    .ltr{direction:ltr;text-align:left}.rtl{direction:rtl;text-align:right}.modal{position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;align-items:center;justify-content:center;z-index:20;padding:16px}.modal.open{display:flex}.modalCard{background:#fff;border-radius:22px;max-width:680px;width:100%;padding:18px;box-shadow:var(--shadow);max-height:90vh;overflow:auto}
+    @media(max-width:900px){.app{grid-template-columns:1fr}aside{height:auto;position:relative;padding:14px}.logo{margin-bottom:12px}nav{grid-template-columns:repeat(2,1fr)}main{padding:14px}.span4,.span5,.span6,.span7,.span8,.span12{grid-column:span 12}.topbar{display:block}.cameraBox,.cameraBox video{min-height:420px}.bigNumber{font-size:28px}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="logo"><div class="logoMark">Rx</div><div><h1>Original Script Matcher</h1><p>Fred label → original script match</p></div></div>
+    <nav>
+      <button class="tabBtn active" data-tab="dashboard">🏠 Dashboard <span class="pill" id="pillFred">0</span></button>
+      <button class="tabBtn" data-tab="import">📥 Fred Excel</button>
+      <button class="tabBtn" data-tab="labels">🏷️ Scan Labels <span class="pill" id="pillTargets">0</span></button>
+      <button class="tabBtn" data-tab="originals">📄 Scan Originals <span class="pill" id="pillMatches">0</span></button>
+      <button class="tabBtn" data-tab="review">✅ Review</button>
+      <button class="tabBtn" data-tab="export">📤 Export</button>
+      <button class="tabBtn" data-tab="settings">⚙️ Settings</button>
+    </nav>
+    <p class="footerNote">Main logic: no QR token dependency. Match by patient + medicine + date, then return Fred Script Number.</p>
+  </aside>
 
+  <main>
+    <section id="dashboard" class="tab">
+      <div class="topbar"><div><h2>Dashboard</h2><p>Start with the Fred Excel export, then scan dispensed labels, then scan original paper prescriptions.</p></div><button class="btn danger" id="resetDemoBtn">Clear local data</button></div>
+      <div class="grid">
+        <div class="card span4"><div class="kpi"><strong id="kpiFred">0</strong><span>Fred records imported</span></div></div>
+        <div class="card span4"><div class="kpi"><strong id="kpiTargets">0</strong><span>Target labels saved</span></div></div>
+        <div class="card span4"><div class="kpi"><strong id="kpiConfirmed">0</strong><span>Confirmed matches</span></div></div>
+        <div class="card span12">
+          <h3>Workflow</h3>
+          <div class="row">
+            <span class="chip info">1. Upload Fred Excel</span>
+            <span class="chip info">2. Live scan label barcode</span>
+            <span class="chip info">3. Confirm target scripts</span>
+            <span class="chip info">4. Live scan original script</span>
+            <span class="chip info">5. Fred Script Number result</span>
+          </div>
+        </div>
+        <div class="card span6"><h3>Latest target labels</h3><div id="latestTargets" class="stack"></div></div>
+        <div class="card span6"><h3>Latest matches</h3><div id="latestMatches" class="stack"></div></div>
+      </div>
+    </section>
+
+    <section id="import" class="tab hidden">
+      <div class="topbar"><div><h2>Import Fred Excel</h2><p>Upload the Fred export. Columns are detected automatically where possible.</p></div></div>
+      <div class="grid">
+        <div class="card span5">
+          <h3>Upload</h3>
+          <div class="stack">
+            <input class="input" id="excelInput" type="file" accept=".xlsx,.xls,.csv" />
+            <div class="status info">Columns accepted: Script Number, Patient First/Last, Patient Name, Drug Description, Dispense Date, Prescribed Date, Prescriber, Price.</div>
+            <button class="btn primary" id="loadSampleBtn">Load tiny sample data</button>
+          </div>
+        </div>
+        <div class="card span7">
+          <h3>Imported records</h3>
+          <div class="tableWrap"><table><thead><tr><th>Script</th><th>Patient</th><th>Medicine</th><th>Dispense</th><th>Prescribed</th></tr></thead><tbody id="fredTbody"></tbody></table></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="labels" class="tab hidden">
+      <div class="topbar"><div><h2>Scan Dispensed Labels</h2><p>The camera opens and reads the linear label barcode live. Output: Fred Script Number.</p></div></div>
+      <div class="grid">
+        <div class="card span7">
+          <div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>Live label scanner</h3><div class="row"><button class="btn primary" id="startLabelCam">Open camera</button><button class="btn" id="stopLabelCam">Stop</button></div></div>
+          <div class="cameraBox"><video id="labelVideo" playsinline muted></video><div class="scanOverlay"><div class="scanFrame"></div></div><div class="scanHint">Label barcode only. If QR/eRx token is detected, it will be ignored.</div></div>
+        </div>
+        <div class="card span5">
+          <h3>Detected label</h3>
+          <div class="stack">
+            <div class="field"><label>Fred Script Number</label><input class="input ltr" id="labelScriptInput" placeholder="Scan or type e.g. 50675759" /></div>
+            <button class="btn" id="lookupLabelBtn">Lookup in Fred data</button>
+            <div id="labelLookupResult" class="status info">Waiting for label barcode...</div>
+            <button class="btn primary" id="confirmLabelBtn" disabled>Confirm & Save Target</button>
+            <div class="status warn">Manual mode: if barcode does not read, type the script number above.</div>
+          </div>
+        </div>
+        <div class="card span12"><h3>Target scripts</h3><div class="tableWrap"><table><thead><tr><th>Script</th><th>Patient</th><th>Medicine</th><th>Date</th><th>Source</th><th></th></tr></thead><tbody id="targetsTbody"></tbody></table></div></div>
+      </div>
+    </section>
+
+    <section id="originals" class="tab hidden">
+      <div class="topbar"><div><h2>Scan Original Scripts</h2><p>Hold the original paper script in front of the camera. The app extracts only the required matching fields from the live feed; no permanent photo is stored.</p></div></div>
+      <div class="grid">
+        <div class="card span7">
+          <div class="row" style="justify-content:space-between;margin-bottom:12px"><h3>Live original scanner</h3><div class="row"><button class="btn primary" id="startOriginalCam">Open camera</button><button class="btn warn" id="smartScanBtn">Start smart scan</button><button class="btn" id="stopOriginalCam">Stop</button></div></div>
+          <div class="cameraBox"><video id="originalVideo" playsinline muted></video><div class="scanOverlay"><div class="scanFrame"></div></div><div class="scanHint" id="ocrHint">Aim at patient name + medicine + date. QR token is ignored unless needed for audit.</div></div>
+          <canvas id="workCanvas" class="hidden"></canvas>
+        </div>
+        <div class="card span5">
+          <h3>Extracted fields</h3>
+          <div class="stack">
+            <div id="ocrStatus" class="status info">Open camera and press Start smart scan.</div>
+            <div class="field"><label>Patient name</label><input class="input" id="origPatient" /></div>
+            <div class="field"><label>Medicine</label><input class="input" id="origMedicine" /></div>
+            <div class="field"><label>Prescription date</label><input class="input" id="origDate" placeholder="dd/mm/yyyy" /></div>
+            <div class="row"><button class="btn primary" id="matchOriginalBtn">Match now</button><button class="btn" id="manualOriginalBtn">Manual Entry</button></div>
+            <div id="matchResultBox" class="stack"></div>
+          </div>
+        </div>
+        <div class="card span12"><h3>Recent original scan candidates</h3><div class="tableWrap"><table><thead><tr><th>Status</th><th>Fred Script</th><th>Patient</th><th>Medicine</th><th>Confidence</th><th>Action</th></tr></thead><tbody id="candidateTbody"></tbody></table></div></div>
+      </div>
+    </section>
+
+    <section id="review" class="tab hidden">
+      <div class="topbar"><div><h2>Review Matches</h2><p>Confirmed / possible / no match records.</p></div></div>
+      <div class="card"><div class="tableWrap"><table><thead><tr><th>Status</th><th>Fred Script</th><th>Patient</th><th>Medicine</th><th>Input</th><th>Confidence</th><th>Time</th><th></th></tr></thead><tbody id="matchesTbody"></tbody></table></div></div>
+    </section>
+
+    <section id="export" class="tab hidden">
+      <div class="topbar"><div><h2>Export</h2><p>Export target labels and confirmed match results.</p></div></div>
+      <div class="grid">
+        <div class="card span6"><h3>Download</h3><div class="stack"><button class="btn primary" id="exportXlsxBtn">Export Excel workbook</button><button class="btn" id="exportCsvBtn">Export matches CSV</button><div class="status info">Excel includes: FredData, TargetScripts, Matches, Audit.</div></div></div>
+        <div class="card span6"><h3>Google Sheet optional</h3><div class="stack"><div class="field"><label>Apps Script Webhook URL</label><input class="input" id="sheetWebhook" placeholder="https://script.google.com/macros/s/.../exec" /></div><button class="btn" id="saveWebhookBtn">Save webhook</button><button class="btn primary" id="syncWebhookBtn">Sync current data</button><div id="webhookStatus" class="status info">Optional. Leave empty if not needed.</div></div></div>
+      </div>
+    </section>
+
+    <section id="settings" class="tab hidden">
+      <div class="topbar"><div><h2>Settings</h2><p>Accuracy and storage settings.</p></div></div>
+      <div class="grid">
+        <div class="card span6"><h3>Matching thresholds</h3><div class="stack"><div class="field"><label>Auto match threshold</label><input class="input" id="thresholdAuto" type="number" min="50" max="100" /></div><div class="field"><label>Possible match threshold</label><input class="input" id="thresholdPossible" type="number" min="20" max="95" /></div><button class="btn primary" id="saveSettingsBtn">Save settings</button></div></div>
+        <div class="card span6"><h3>Privacy mode</h3><div class="status ok">Default: no prescription image is stored. Only extracted fields + match result are stored locally in browser storage.</div><p class="muted tiny">For production, move storage to your authorised MyPharmacyHub backend with user roles and audit logs.</p></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="modal" id="manualModal">
+  <div class="modalCard">
+    <div class="row" style="justify-content:space-between"><h3>Manual Entry</h3><button class="btn ghost" id="closeManual">Close</button></div>
+    <p class="muted">For poor handwriting, enter only these few fields. You do not need to type the whole prescription.</p>
+    <div class="grid">
+      <div class="field span6"><label>Patient name</label><input class="input" id="manualPatient" /></div>
+      <div class="field span6"><label>Medicine</label><input class="input" id="manualMedicine" /></div>
+      <div class="field span6"><label>Prescription date</label><input class="input" id="manualDate" placeholder="dd/mm/yyyy" /></div>
+      <div class="field span6"><label>DOB / Prescriber optional</label><input class="input" id="manualExtra" /></div>
+      <div class="span12 row"><button class="btn primary" id="runManualMatch">Run match</button></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script type="module">
+let ZXingBrowser=null;
+try{ ZXingBrowser = await import('https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm'); }catch(e){ console.warn('ZXing fallback not loaded',e); }
+
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const storeKey='osm_v1';
+const state = loadState();
+let labelStream=null, originalStream=null, labelScanTimer=null, smartScanTimer=null, labelReader=null;
+let pendingLabelRecord=null;
+let lastCandidates=[];
+
+function loadState(){
+  const base={fredRecords:[],targets:[],matches:[],audit:[],settings:{auto:85,possible:60,webhook:''}};
+  try{return {...base,...JSON.parse(localStorage.getItem(storeKey)||'{}')}}catch{return base}
+}
+function saveState(){localStorage.setItem(storeKey,JSON.stringify(state)); refreshAll();}
+function log(action,details={}){state.audit.unshift({time:new Date().toISOString(),action,details}); if(state.audit.length>500)state.audit.length=500;}
+function norm(s){return String(s||'').toLowerCase().replace(/[()\[\],.;:]/g,' ').replace(/\s+/g,' ').trim();}
+function onlyDigits(s){return String(s||'').replace(/\D/g,'');}
+function title(s){return String(s||'').replace(/\s+/g,' ').trim();}
+function parseDateAny(v){
+  if(!v) return '';
+  if(typeof v==='number'){
+    const d = XLSX?.SSF?.parse_date_code?.(v); if(d) return `${String(d.d).padStart(2,'0')}/${String(d.m).padStart(2,'0')}/${d.y}`;
+  }
+  let s=String(v).trim();
+  let m=s.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+  if(m){let y=m[3].length===2?'20'+m[3]:m[3];return `${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}/${y}`;}
+  m=s.match(/(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+  if(m) return `${m[3].padStart(2,'0')}/${m[2].padStart(2,'0')}/${m[1]}`;
+  return s;
+}
+function dateClose(a,b){ if(!a||!b) return 0; a=parseDateAny(a); b=parseDateAny(b); if(a===b) return 1; const pa=a.split('/'), pb=b.split('/'); if(pa.length===3&&pb.length===3){ if(pa[1]===pb[1]&&pa[2]===pb[2]) return .55; if(pa[2]===pb[2]) return .25;} return 0; }
+function tokenLike(v){return /[A-Za-z]/.test(v)&&String(v).length>12;}
+function scriptLike(v){return /^\d{5,12}$/.test(onlyDigits(v));}
+
+function getColumn(row,names){
+  const keys=Object.keys(row||{}); const normalized=keys.map(k=>[k,norm(k)]);
+  for(const name of names){const nn=norm(name); const hit=normalized.find(([k,nk])=>nk===nn || nk.includes(nn)); if(hit) return row[hit[0]];}
+  return '';
+}
+function normalizeFredRow(row){
+  const script = getColumn(row,['Script Number','Script No','Script','Rx Number','Rx No','Prescription Number','Number']);
+  const first = getColumn(row,['Patient First Name','First Name','Patient Given Name']);
+  const last = getColumn(row,['Patient Last Name','Last Name','Surname','Patient Surname']);
+  const full = getColumn(row,['Patient Name','Name','Patient']);
+  const patient = title(full || `${first||''} ${last||''}`);
+  const med = getColumn(row,['Drug Description','Medicine','Drug','Description','Item Description','Brand','Generic']);
+  const dispenseDate = parseDateAny(getColumn(row,['Dispense Date','Date','Date Dispensed']));
+  const prescribedDate = parseDateAny(getColumn(row,['Prescribed Date','Prescription Date','Script Date','Date Written']));
+  return {
+    id: crypto.randomUUID(),
+    scriptNumber: onlyDigits(script),
+    patient,
+    patientNorm:norm(patient),
+    medicine:title(med),
+    medicineNorm:norm(med),
+    dispenseDate,
+    prescribedDate,
+    prescriber: title(getColumn(row,['Prescriber','Prescriber Name','Doctor','Medical Doctor'])),
+    prescriberNumber: String(getColumn(row,['Prescriber Number','Dr Number','Doctor Number'])||''),
+    price: String(getColumn(row,['Patient Price','Price','Cost'])||''),
+    quantity: String(getColumn(row,['Quantity','Qty'])||''),
+    repeats: String(getColumn(row,['Repeats','Repeat','Supply Number'])||''),
+    raw: row
+  };
+}
+
+function levenshtein(a,b){a=norm(a);b=norm(b); if(!a||!b)return 0; const m=[]; for(let i=0;i<=b.length;i++)m[i]=[i]; for(let j=0;j<=a.length;j++)m[0][j]=j; for(let i=1;i<=b.length;i++)for(let j=1;j<=a.length;j++)m[i][j]=b.charAt(i-1)==a.charAt(j-1)?m[i-1][j-1]:Math.min(m[i-1][j-1)+1,Math.min(m[i][j-1]+1,m[i-1][j]+1)); const dist=m[b.length][a.length]; return 1-dist/Math.max(a.length,b.length);}
+function tokenSetScore(a,b){
+  a=norm(a).split(' ').filter(x=>x.length>1); b=norm(b).split(' ').filter(x=>x.length>1); if(!a.length||!b.length)return 0;
+  const setB=new Set(b); const common=a.filter(x=>setB.has(x)).length; return common/Math.max(a.length,b.length);
+}
+function sim(a,b){return Math.max(levenshtein(a,b), tokenSetScore(a,b));}
+function medCore(s){
+  const stop=new Set(['tablet','tablets','capsule','capsules','cap','tab','tabs','solution','cream','ointment','injection','patch','pre','filled','pen','mg','ml','mcg','microgram','dose','daily','weekly']);
+  return norm(s).split(' ').filter(w=>!stop.has(w)&&!/^\d/.test(w)).join(' ');
+}
+function matchAgainstTargets(input){
+  const pool = state.targets.map(t=>state.fredRecords.find(r=>r.scriptNumber===t.scriptNumber)).filter(Boolean);
+  const sourcePool = pool.length ? pool : state.fredRecords;
+  return sourcePool.map(r=>{
+    const p=sim(input.patient,r.patient);
+    const m=Math.max(sim(input.medicine,r.medicine), sim(medCore(input.medicine), medCore(r.medicine)));
+    const d=Math.max(dateClose(input.date,r.prescribedDate), dateClose(input.date,r.dispenseDate)*.75);
+    let score = (p*42)+(m*42)+(d*16);
+    let reasons=[];
+    if(p>.78) reasons.push('patient strong'); else if(p>.48) reasons.push('patient partial');
+    if(m>.72) reasons.push('medicine strong'); else if(m>.42) reasons.push('medicine partial');
+    if(d>.8) reasons.push('date exact'); else if(d>.3) reasons.push('date close');
+    if(!input.date && p>.82 && m>.82) score+=8;
+    return {record:r,score:Math.round(Math.min(100,score)),reasons:reasons.join(', ')||'weak match'};
+  }).filter(x=>x.score>=25).sort((a,b)=>b.score-a.score).slice(0,5);
+}
+
+function refreshAll(){
+  $('#pillFred').textContent=state.fredRecords.length; $('#pillTargets').textContent=state.targets.length; $('#pillMatches').textContent=state.matches.filter(m=>m.status==='CONFIRMED_MATCH').length;
+  $('#kpiFred').textContent=state.fredRecords.length; $('#kpiTargets').textContent=state.targets.length; $('#kpiConfirmed').textContent=state.matches.filter(m=>m.status==='CONFIRMED_MATCH').length;
+  $('#thresholdAuto').value=state.settings.auto; $('#thresholdPossible').value=state.settings.possible; $('#sheetWebhook').value=state.settings.webhook||'';
+  renderFred(); renderTargets(); renderMatches(); renderLatest();
+}
+function renderFred(){
+  $('#fredTbody').innerHTML = state.fredRecords.slice(0,300).map(r=>`<tr><td>${r.scriptNumber}</td><td>${r.patient}</td><td>${r.medicine}</td><td>${r.dispenseDate}</td><td>${r.prescribedDate}</td></tr>`).join('') || `<tr><td colspan="5" class="muted">No Fred Excel imported.</td></tr>`;
+}
+function renderTargets(){
+  $('#targetsTbody').innerHTML = state.targets.map(t=>{const r=state.fredRecords.find(x=>x.scriptNumber===t.scriptNumber)||{}; return `<tr><td><strong>${t.scriptNumber}</strong></td><td>${r.patient||''}</td><td>${r.medicine||''}</td><td>${r.dispenseDate||r.prescribedDate||''}</td><td>${t.source||'label'}</td><td><button class="btn danger" data-del-target="${t.scriptNumber}">Remove</button></td></tr>`}).join('') || `<tr><td colspan="6" class="muted">No target labels saved yet.</td></tr>`;
+  $$('[data-del-target]').forEach(b=>b.onclick=()=>{state.targets=state.targets.filter(t=>t.scriptNumber!==b.dataset.delTarget); saveState();});
+}
+function renderMatches(){
+  $('#matchesTbody').innerHTML = state.matches.map((m,i)=>`<tr><td><span class="chip ${m.status==='CONFIRMED_MATCH'?'ok':m.status==='POSSIBLE_MATCH'?'warn':m.status==='NO_MATCH'?'bad':'info'}">${m.status}</span></td><td><strong>${m.scriptNumber||''}</strong></td><td>${m.patient||''}</td><td>${m.medicine||''}</td><td>${m.inputPatient||''}<br>${m.inputMedicine||''}<br>${m.inputDate||''}</td><td>${m.confidence||0}%</td><td>${new Date(m.time).toLocaleString()}</td><td><button class="btn danger" data-del-match="${i}">Delete</button></td></tr>`).join('') || `<tr><td colspan="8" class="muted">No matches yet.</td></tr>`;
+  $$('[data-del-match]').forEach(b=>b.onclick=()=>{state.matches.splice(Number(b.dataset.delMatch),1); saveState();});
+}
+function renderLatest(){
+  $('#latestTargets').innerHTML = state.targets.slice(-4).reverse().map(t=>{const r=state.fredRecords.find(x=>x.scriptNumber===t.scriptNumber)||{}; return `<div class="resultCard"><strong>${t.scriptNumber}</strong><br><span class="muted">${r.patient||''} — ${r.medicine||''}</span></div>`}).join('') || '<p class="muted">No target labels yet.</p>';
+  $('#latestMatches').innerHTML = state.matches.slice(0,4).map(m=>`<div class="resultCard"><strong>${m.scriptNumber||m.status}</strong><br><span class="muted">${m.patient||''} — ${m.medicine||''}</span></div>`).join('') || '<p class="muted">No matches yet.</p>';
+}
+
+$$('.tabBtn').forEach(btn=>btn.addEventListener('click',()=>{ $$('.tabBtn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); $$('.tab').forEach(t=>t.classList.add('hidden')); $('#'+btn.dataset.tab).classList.remove('hidden'); }));
+
+$('#excelInput').addEventListener('change', async e=>{
+  const file=e.target.files[0]; if(!file) return;
+  const data=await file.arrayBuffer(); const wb=XLSX.read(data); const ws=wb.Sheets[wb.SheetNames[0]]; const rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+  const records=rows.map(normalizeFredRow).filter(r=>r.scriptNumber && r.patient && r.medicine);
+  state.fredRecords=records; log('import_fred',{count:records.length,file:file.name}); saveState(); alert(`Imported ${records.length} Fred records.`);
+});
+$('#loadSampleBtn').onclick=()=>{state.fredRecords=[
+  normalizeFredRow({'Script Number':'50675759','Patient First Name':'Lawrence','Patient Last Name':'Daniels','Drug Description':'AMLODIPINE TABLETS 10mg','Dispense Date':'03/07/2026','Prescribed Date':'03/07/2026','Patient Price':'$9.99'}),
+  normalizeFredRow({'Script Number':'50670427','Patient First Name':'Heather','Patient Last Name':'Wallace','Drug Description':'IVERMECTIN TABLETS 3mg','Dispense Date':'25/06/2026','Prescribed Date':'25/06/2026','Patient Price':'$58.98'}),
+  normalizeFredRow({'Script Number':'50669356','Patient First Name':'Rebecca','Patient Last Name':'Davey (D35)','Drug Description':'WEGOVY FLEXTOUCH PRE-FILLED PEN 2.4mg/dose, 3.2mg/mL 3mL','Dispense Date':'23/06/2026','Prescribed Date':'31/03/2026','Patient Price':'$379.95'}),
+  normalizeFredRow({'Script Number':'50681234','Patient First Name':'Jeffrey','Patient Last Name':'Miceli','Drug Description':'DIAZEPAM TABLETS 5mg','Dispense Date':'13/03/2026','Prescribed Date':'12/03/2026','Patient Price':'$7.99'}),
+]; log('load_sample'); saveState();};
+
+async function openCam(video,kind){
+  const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
+  video.srcObject=stream; await video.play(); return stream;
+}
+function stopStream(stream){ if(stream) stream.getTracks().forEach(t=>t.stop()); }
+async function detectBarcodeFromVideo(video){
+  if('BarcodeDetector' in window){
+    const formats=['code_128','code_39','ean_13','ean_8','itf','qr_code','data_matrix','pdf417'];
+    const detector=new BarcodeDetector({formats});
+    try{const codes=await detector.detect(video); if(codes&&codes[0]) return codes[0].rawValue;}catch(e){}
+  }
+  return null;
+}
+function handleLabelValue(raw){
+  raw=String(raw||'').trim(); if(!raw) return;
+  if(tokenLike(raw) && !scriptLike(raw)){ $('#labelLookupResult').className='status warn'; $('#labelLookupResult').textContent='This looks like an eRx token, ignored. Scan the Fred label barcode.'; return; }
+  const script=onlyDigits(raw); if(!scriptLike(script)) return;
+  $('#labelScriptInput').value=script; lookupLabel(script);
+}
+async function startZXingLabel(){
+  if(!ZXingBrowser || !labelReader) return;
+  try{ await labelReader.decodeFromVideoElementContinuously($('#labelVideo'),(result,err)=>{ if(result) handleLabelValue(result.getText()); }); }catch(e){console.warn(e)}
+}
+$('#startLabelCam').onclick=async()=>{
+  try{ labelStream=await openCam($('#labelVideo'),'label'); labelReader = ZXingBrowser ? new ZXingBrowser.BrowserMultiFormatReader() : null; startZXingLabel(); clearInterval(labelScanTimer); labelScanTimer=setInterval(async()=>{const v=await detectBarcodeFromVideo($('#labelVideo')); if(v) handleLabelValue(v);},450); }
+  catch(e){alert('Camera error: '+e.message)}
+};
+$('#stopLabelCam').onclick=()=>{clearInterval(labelScanTimer); if(labelReader) try{labelReader.reset()}catch{} stopStream(labelStream); labelStream=null;};
+$('#lookupLabelBtn').onclick=()=>lookupLabel($('#labelScriptInput').value);
+$('#labelScriptInput').addEventListener('keydown',e=>{if(e.key==='Enter') lookupLabel(e.target.value)});
+function lookupLabel(v){
+  const script=onlyDigits(v); const rec=state.fredRecords.find(r=>r.scriptNumber===script);
+  if(!rec){pendingLabelRecord=null; $('#confirmLabelBtn').disabled=true; $('#labelLookupResult').className='status bad'; $('#labelLookupResult').innerHTML=`Script ${script||''} not found in Fred Excel.`; return;}
+  pendingLabelRecord=rec; $('#confirmLabelBtn').disabled=false; $('#labelLookupResult').className='status ok'; $('#labelLookupResult').innerHTML=`<strong>Script No: ${rec.scriptNumber}</strong><br>${rec.patient}<br>${rec.medicine}<br>${rec.dispenseDate||rec.prescribedDate}`;
+}
+$('#confirmLabelBtn').onclick=()=>{
+  if(!pendingLabelRecord) return;
+  if(!state.targets.some(t=>t.scriptNumber===pendingLabelRecord.scriptNumber)) state.targets.push({scriptNumber:pendingLabelRecord.scriptNumber,source:'label_scan',time:new Date().toISOString()});
+  log('save_target',{scriptNumber:pendingLabelRecord.scriptNumber}); pendingLabelRecord=null; $('#confirmLabelBtn').disabled=true; $('#labelLookupResult').className='status ok'; $('#labelLookupResult').textContent='LABEL SAVED'; $('#labelScriptInput').value=''; saveState();
+};
+
+$('#startOriginalCam').onclick=async()=>{try{originalStream=await openCam($('#originalVideo'),'original')}catch(e){alert('Camera error: '+e.message)}};
+$('#stopOriginalCam').onclick=()=>{clearInterval(smartScanTimer); stopStream(originalStream); originalStream=null; $('#ocrStatus').className='status info'; $('#ocrStatus').textContent='Stopped.';};
+$('#smartScanBtn').onclick=()=>{
+  if(!originalStream){alert('Open camera first.');return}
+  clearInterval(smartScanTimer); $('#ocrStatus').className='status info'; $('#ocrStatus').textContent='Smart scan running. Hold patient name + medicine + date in frame.';
+  runOcrOnce(); smartScanTimer=setInterval(runOcrOnce,4200);
+};
+async function runOcrOnce(){
+  const video=$('#originalVideo'); if(!video.videoWidth) return;
+  const canvas=$('#workCanvas'); const maxW=1200; const ratio=Math.min(1,maxW/video.videoWidth); canvas.width=Math.floor(video.videoWidth*ratio); canvas.height=Math.floor(video.videoHeight*ratio);
+  const ctx=canvas.getContext('2d'); ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  const img=ctx.getImageData(0,0,canvas.width,canvas.height); enhanceImage(img); ctx.putImageData(img,0,0);
+  try{
+    if(!window.Tesseract){$('#ocrStatus').className='status warn'; $('#ocrStatus').textContent='OCR library not loaded. Use manual entry.'; return;}
+    const res=await Tesseract.recognize(canvas,'eng',{logger:m=>{ if(m.status==='recognizing text') $('#ocrStatus').textContent=`Reading text... ${Math.round((m.progress||0)*100)}%`; }});
+    const text=res.data.text||''; const fields=extractFields(text);
+    if(fields.patient && !$('#origPatient').value) $('#origPatient').value=fields.patient;
+    if(fields.medicine && !$('#origMedicine').value) $('#origMedicine').value=fields.medicine;
+    if(fields.date && !$('#origDate').value) $('#origDate').value=fields.date;
+    $('#ocrStatus').className='status ok'; $('#ocrStatus').innerHTML=`Extracted: <strong>${fields.patient||'?'}</strong> — ${fields.medicine||'?'} — ${fields.date||'?'}<br><span class="tiny">If wrong, edit fields or use Manual Entry.</span>`;
+    if(fields.patient && fields.medicine){ runMatch({patient:$('#origPatient').value,medicine:$('#origMedicine').value,date:$('#origDate').value},false); }
+  }catch(e){$('#ocrStatus').className='status bad'; $('#ocrStatus').textContent='OCR failed. Use Manual Entry.'; console.error(e);}
+}
+function enhanceImage(img){
+  const d=img.data; for(let i=0;i<d.length;i+=4){let g=.299*d[i]+.587*d[i+1]+.114*d[i+2]; g=Math.max(0,Math.min(255,(g-115)*1.55+128)); d[i]=d[i+1]=d[i+2]=g;}
+}
+function extractFields(text){
+  const lines=text.split(/\n+/).map(title).filter(Boolean);
+  const joined=lines.join(' ');
+  const date=parseDateAny((joined.match(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/)||[])[0]||'');
+  const medWords=['tablet','tablets','capsule','capsules','patch','cream','ointment','injection','pen','solution','mg','mcg','microgram','ml','dose'];
+  let medLine=lines.find(l=>medWords.some(w=>norm(l).includes(w)) && /\d/.test(l)) || lines.find(l=>medWords.some(w=>norm(l).includes(w))) || '';
+  medLine=medLine.replace(/^(drug|medicine|item)\s*[:\-]?/i,'').trim();
+  const patientHint=lines.find(l=>/^(mr|mrs|ms|miss|master|patient)\b/i.test(l)) || '';
+  let patient=patientHint.replace(/^patient\s*[:\-]?/i,'').trim();
+  if(!patient){
+    const candidates=lines.filter(l=>/^[A-Z][a-z]+\s+[A-Z][a-z]+/.test(l) && !medWords.some(w=>norm(l).includes(w)) && !/doctor|prescriber|pharmacy/i.test(l));
+    patient=candidates[0]||'';
+  }
+  patient=patient.replace(/^(mr|mrs|ms|miss|master|dr)\.?\s+/i,'').replace(/\b\d{2,}\b/g,'').trim();
+  return {patient:title(patient),medicine:title(medLine),date};
+}
+$('#matchOriginalBtn').onclick=()=>runMatch({patient:$('#origPatient').value,medicine:$('#origMedicine').value,date:$('#origDate').value},true);
+function runMatch(input,showBox=true){
+  input={patient:title(input.patient),medicine:title(input.medicine),date:parseDateAny(input.date)};
+  if(!input.patient && !input.medicine){openManual(input);return;}
+  const candidates=matchAgainstTargets(input); lastCandidates=candidates;
+  renderCandidates(input,candidates,showBox);
+}
+function renderCandidates(input,candidates,showBox=true){
+  $('#candidateTbody').innerHTML=candidates.map((c,i)=>`<tr><td><span class="chip ${c.score>=state.settings.auto?'ok':c.score>=state.settings.possible?'warn':'bad'}">${c.score>=state.settings.auto?'MATCH FOUND':c.score>=state.settings.possible?'POSSIBLE':'LOW'}</span></td><td><strong>${c.record.scriptNumber}</strong></td><td>${c.record.patient}</td><td>${c.record.medicine}</td><td>${c.score}%<br><span class="tiny muted">${c.reasons}</span></td><td><button class="btn primary" data-confirm-candidate="${i}">Confirm</button></td></tr>`).join('') || `<tr><td colspan="6"><span class="chip bad">NO MATCH</span> No good candidate found. Use Manual Entry.</td></tr>`;
+  $$('[data-confirm-candidate]').forEach(b=>b.onclick=()=>confirmCandidate(Number(b.dataset.confirmCandidate),input));
+  if(showBox){
+    if(!candidates.length){$('#matchResultBox').innerHTML=`<div class="status bad">NO MATCH. Use Manual Entry or scan a clearer area.</div>`; return;}
+    const top=candidates[0]; const cls=top.score>=state.settings.auto?'ok':top.score>=state.settings.possible?'warn':'bad';
+    $('#matchResultBox').innerHTML=`<div class="resultCard"><span class="chip ${cls}">${top.score>=state.settings.auto?'MATCH FOUND':'POSSIBLE MATCH'}</span><br><br><div class="bigNumber">${top.record.scriptNumber}</div><p><strong>${top.record.patient}</strong><br>${top.record.medicine}<br>${top.record.dispenseDate||top.record.prescribedDate}</p><div class="confidence"><div style="width:${top.score}%"></div></div><p class="tiny muted">${top.score}% — ${top.reasons}</p><button class="btn primary" onclick="window.__confirmTop()">Confirm Match</button></div>`;
+    window.__confirmTop=()=>confirmCandidate(0,input);
+  }
+}
+function confirmCandidate(idx,input){
+  const c=lastCandidates[idx]; if(!c) return;
+  const status='CONFIRMED_MATCH';
+  state.matches.unshift({status,scriptNumber:c.record.scriptNumber,patient:c.record.patient,medicine:c.record.medicine,inputPatient:input.patient,inputMedicine:input.medicine,inputDate:input.date,confidence:c.score,reason:c.reasons,time:new Date().toISOString()});
+  log('confirm_match',{scriptNumber:c.record.scriptNumber,confidence:c.score}); saveState();
+  $('#matchResultBox').innerHTML=`<div class="status ok"><strong>CONFIRMED MATCH</strong><br>Fred Script No: ${c.record.scriptNumber}<br>Replace copy with original.</div>`;
+}
+function openManual(prefill={}){ $('#manualModal').classList.add('open'); $('#manualPatient').value=prefill.patient||$('#origPatient').value||''; $('#manualMedicine').value=prefill.medicine||$('#origMedicine').value||''; $('#manualDate').value=prefill.date||$('#origDate').value||''; }
+$('#manualOriginalBtn').onclick=()=>openManual(); $('#closeManual').onclick=()=>$('#manualModal').classList.remove('open');
+$('#runManualMatch').onclick=()=>{ $('#manualModal').classList.remove('open'); $('#origPatient').value=$('#manualPatient').value; $('#origMedicine').value=$('#manualMedicine').value; $('#origDate').value=$('#manualDate').value; runMatch({patient:$('#manualPatient').value,medicine:$('#manualMedicine').value,date:$('#manualDate').value},true); };
+
+$('#saveSettingsBtn').onclick=()=>{state.settings.auto=Number($('#thresholdAuto').value)||85; state.settings.possible=Number($('#thresholdPossible').value)||60; saveState();};
+$('#saveWebhookBtn').onclick=()=>{state.settings.webhook=$('#sheetWebhook').value.trim(); saveState(); $('#webhookStatus').className='status ok'; $('#webhookStatus').textContent='Saved.';};
+$('#syncWebhookBtn').onclick=async()=>{
+  const url=state.settings.webhook; if(!url){$('#webhookStatus').className='status warn'; $('#webhookStatus').textContent='No webhook URL set.'; return;}
+  try{ const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fredRecords:state.fredRecords,targets:state.targets,matches:state.matches,audit:state.audit})}); $('#webhookStatus').className=res.ok?'status ok':'status bad'; $('#webhookStatus').textContent=res.ok?'Synced.':'Webhook error.'; }catch(e){$('#webhookStatus').className='status bad'; $('#webhookStatus').textContent='Sync failed: '+e.message;}
+};
+function rowsForExport(){
+  return state.matches.map(m=>({'Status':m.status,'Fred Script Number':m.scriptNumber,'Patient':m.patient,'Medicine':m.medicine,'Input Patient':m.inputPatient,'Input Medicine':m.inputMedicine,'Input Date':m.inputDate,'Confidence':m.confidence,'Reason':m.reason,'Time':m.time}));
+}
+$('#exportXlsxBtn').onclick=()=>{
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(state.fredRecords),'FredData');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(state.targets),'TargetScripts');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rowsForExport()),'Matches');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(state.audit),'Audit');
+  XLSX.writeFile(wb,`original-script-matcher-${new Date().toISOString().slice(0,10)}.xlsx`);
+};
+$('#exportCsvBtn').onclick=()=>{
+  const ws=XLSX.utils.json_to_sheet(rowsForExport()); const csv=XLSX.utils.sheet_to_csv(ws); const blob=new Blob([csv],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='matches.csv'; a.click(); URL.revokeObjectURL(a.href);
+};
+$('#resetDemoBtn').onclick=()=>{if(confirm('Clear all local data?')){localStorage.removeItem(storeKey); location.reload();}};
+
+refreshAll();
+</script>
+</body>
+</html>
