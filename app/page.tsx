@@ -305,9 +305,28 @@ export default function Home() {
 
   const value = cleanLabel(detected || manual);
   const current = useMemo(() => findScript(scripts, value), [scripts, value]);
-  const matchedPairs = useMemo(() => scans.filter((s) => s.record?.scriptNumber && originals.some((p) => p.scriptNumber === s.record?.scriptNumber && medLooksSame(p.medicine, s.record?.medicine))), [scans, originals]);
-  const unmatchedDispensed = useMemo(() => scans.filter((s) => !s.record?.scriptNumber || !originals.some((p) => p.scriptNumber === s.record?.scriptNumber && medLooksSame(p.medicine, s.record?.medicine))), [scans, originals]);
-  const unmatchedOriginals = useMemo(() => originals.filter((p) => !p.scriptNumber || !scans.some((s) => s.record?.scriptNumber === p.scriptNumber && medLooksSame(p.medicine, s.record?.medicine))), [originals, scans]);
+  function patientLooksSame(a?: string, b?: string) {
+    const aa = norm(a || "");
+    const bb = norm(b || "");
+    return Boolean(aa && bb && (aa === bb || aa.includes(bb) || bb.includes(aa)));
+  }
+  function dateLooksSame(a?: string, b?: string) {
+    const aa = dig(auDate(a || "") || a || "");
+    const bb = dig(auDate(b || "") || b || "");
+    if (!aa || !bb) return true;
+    return aa === bb || aa.slice(0, 8) === bb.slice(0, 8);
+  }
+  function scanOriginalMatch(scan: Scan, original: OriginalEntry) {
+    const rec = scan.record;
+    if (!rec || !norm(rec.medicine) || !norm(original.medicine)) return false;
+    const ma = dig(rec.medicare || "");
+    const mb = dig(original.medicare || "");
+    const patientOk = Boolean(ma && mb && (ma.includes(mb) || mb.includes(ma))) || patientLooksSame(rec.patient, original.patient);
+    return patientOk && medLooksSame(rec.medicine, original.medicine) && dateLooksSame(rec.dispenseDate, original.date);
+  }
+  const matchedPairs = useMemo(() => scans.map((scan) => ({ scan, rx: originals.find((p) => scanOriginalMatch(scan, p)) })).filter((pair): pair is { scan: Scan; rx: OriginalEntry } => Boolean(pair.rx)), [scans, originals]);
+  const unmatchedDispensed = useMemo(() => scans.filter((s) => !originals.some((p) => scanOriginalMatch(s, p))), [scans, originals]);
+  const unmatchedOriginals = useMemo(() => originals.filter((p) => !scans.some((s) => scanOriginalMatch(s, p))), [originals, scans]);
   const masterRange = rangeLabel(scripts);
   const preview: Scan | null = value ? { value, savedAt: new Date().toISOString(), status: current ? "matched" : "unmatched", record: current } : last;
   const originalSuggestions = useMemo(() => {
@@ -317,16 +336,13 @@ export default function Home() {
   }, [scripts, manualOriginal]);
 
   const tableRows = useMemo<ReviewRow[]>(() => {
-    if (tableMode === "matched") return matchedPairs.map((scan) => {
-      const rx = originals.find((p) => p.scriptNumber === scan.record?.scriptNumber && medLooksSame(p.medicine, scan.record?.medicine));
-      return { Status: "MATCHED", DispensedCopy: scan.value, Script: scan.record?.scriptNumber || "", Patient: scan.record?.patient || rx?.patient || "", Address: rx?.address || "", Date: auDate(scan.record?.dispenseDate || rx?.date || ""), Medicine: scan.record?.medicine || rx?.medicine || "", DocumentType: rx?.documentType || scan.documentType || "", DispensedTime: fmt(scan.savedAt), OriginalTime: rx ? fmt(rx.savedAt) : "" };
-    });
+    if (tableMode === "matched") return matchedPairs.map(({ scan, rx }) => ({ Status: "MATCHED", DispensedCopy: scan.value, Script: scan.record?.scriptNumber || rx.scriptNumber || "", Patient: scan.record?.patient || rx.patient || "", Address: rx.address || "", Date: auDate(scan.record?.dispenseDate || rx.date || ""), Medicine: scan.record?.medicine || rx.medicine || "", DocumentType: rx.documentType || scan.documentType || "", DispensedTime: fmt(scan.savedAt), OriginalTime: fmt(rx.savedAt) }));
     if (tableMode === "unmatchedDispensed") return unmatchedDispensed.map((scan) => ({ Status: "UNMATCHED_DISPENSED_COPY", DispensedCopy: scan.value, Script: scan.record?.scriptNumber || "", Patient: scan.record?.patient || "", Address: "", Date: auDate(scan.record?.dispenseDate || ""), Medicine: scan.record?.medicine || "", DocumentType: scan.documentType || "", DispensedTime: fmt(scan.savedAt), OriginalTime: "" }));
     return unmatchedOriginals.map((rx) => ({ Status: "UNMATCHED_ORIGINAL_SCRIPT", DispensedCopy: "", Script: rx.scriptNumber || "", Patient: rx.patient, Address: rx.address || "", Date: auDate(rx.date), Medicine: rx.medicine, DocumentType: rx.documentType || "", DispensedTime: "", OriginalTime: fmt(rx.savedAt) }));
-  }, [tableMode, matchedPairs, unmatchedDispensed, unmatchedOriginals, originals]);
+  }, [tableMode, matchedPairs, unmatchedDispensed, unmatchedOriginals]);
 
   const recentItems = useMemo<RecentItem[]>(() => {
-    const dispensedItems = scans.map((s) => ({ kind: "Dispensed" as const, title: s.value, subtitle: s.record ? `${s.record.patient || "-"} | ${s.record.medicine || "-"}` : "No FRED match yet", time: s.savedAt }));
+    const dispensedItems = scans.map((s) => ({ kind: "Dispensed" as const, title: s.record?.patient || s.value, subtitle: s.record ? `${s.record.medicine || "-"} | ${auDate(s.record.dispenseDate || "") || "-"}` : "No FRED match yet", time: s.savedAt }));
     const originalItems = originals.map((p) => ({ kind: "Original" as const, title: p.scriptNumber || p.patient || "Original saved", subtitle: `${p.patient || "-"} | ${p.medicine || "-"}${p.documentType ? ` | ${docLabel(p.documentType)}` : ""}`, time: p.savedAt }));
     return [...dispensedItems, ...originalItems].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()).slice(0, 3);
   }, [scans, originals]);
@@ -413,7 +429,7 @@ export default function Home() {
   }
 
   function originalKey(entry: Omit<OriginalEntry, "id" | "savedAt"> | OriginalEntry) {
-    return entry.scriptNumber ? `script:${entry.scriptNumber}:${norm(entry.medicine)}` : `free:${norm(entry.patient)}:${dig(entry.date)}:${norm(entry.medicine)}:${dig(entry.medicare)}`;
+    return `rx:${norm(entry.patient)}:${dig(entry.date)}:${norm(entry.medicine)}:${dig(entry.medicare)}`;
   }
   function saveOriginalEntries(entries: Omit<OriginalEntry, "id" | "savedAt">[]) {
     if (entries.length === 0) { notify("AI could not read a medicine item. Try closer/clearer scan."); return; }
@@ -428,6 +444,20 @@ export default function Home() {
     notify(`${next.length} original script item${next.length > 1 ? "s" : ""} saved${duplicateCount ? ` (${duplicateCount} duplicate updated)` : ""}.${warning ? ` Warning: ${warning}` : ""}`);
   }
   function saveOriginalEntry(entry: Omit<OriginalEntry, "id" | "savedAt">) { saveOriginalEntries([entry]); }
+
+  function saveDispensedAiEntries(entries: Omit<OriginalEntry, "id" | "savedAt">[]) {
+    if (entries.length === 0) { notify("AI could not read a dispensed medicine item. Try closer/clearer scan."); return; }
+    const savedAt = new Date().toISOString();
+    const next: Scan[] = entries.map((entry, index) => {
+      const record: ScriptRec = { scriptNumber: entry.scriptNumber || "", dispenseDate: auDate(entry.date || ""), patient: entry.patient || "", medicine: entry.medicine || "", quantity: entry.quantity || "", medicare: entry.medicare || "" };
+      const key = `dispensed:${norm(entry.patient)}:${dig(entry.date)}:${norm(entry.medicine)}:${dig(entry.medicare)}:${index + 1}`;
+      return { value: key, savedAt, status: "unmatched", record, documentType: entry.documentType };
+    });
+    setScans((old) => [...next, ...old.filter((s) => !next.some((n) => norm(n.value) === norm(s.value)))]);
+    setLast(next[0] || null); setManual(""); setDetected("");
+    const matchedNow = next.filter((scan) => originals.some((p) => scanOriginalMatch(scan, p))).length;
+    notify(`${next.length} dispensed item${next.length > 1 ? "s" : ""} saved. ${matchedNow ? `${matchedNow} matched now.` : "Unmatched — saved for later matching."}`);
+  }
 
   async function scanDocumentWithAi(scanMode: ScanMode) {
     if (!videoRef.current || !cameraOn) { notify("Open camera first."); return; }
@@ -457,16 +487,9 @@ export default function Home() {
       const baseScript = cleanLabel(r.scriptNumber);
 
       if (scanMode === "dispensed_copy") {
-        const scriptFromAi = baseScript || cleanLabel(meds.find((med) => med.labelNumber)?.labelNumber);
-        if (scriptFromAi) {
-          setManual(scriptFromAi);
-          setDetected("");
-          saveDispensedCopy(documentType, scriptFromAi);
-          return;
-        }
         const entries = meds.map((med, index) => ({
           source: "scanner" as const,
-          scriptNumber: undefined,
+          scriptNumber: baseScript || cleanLabel(med.labelNumber) || undefined,
           patient,
           address,
           date: auDate(r.date || ""),
@@ -479,7 +502,10 @@ export default function Home() {
           warning,
           itemIndex: index + 1,
         })).filter((e) => e.medicine || e.patient);
-        saveOriginalEntries(entries);
+        if (entries.length > 0) { saveDispensedAiEntries(entries); return; }
+        const scriptFromAi = baseScript || cleanLabel(meds.find((med) => med.labelNumber)?.labelNumber);
+        if (scriptFromAi) { saveDispensedCopy(documentType, scriptFromAi); return; }
+        notify("AI could not read a dispensed medicine item. Try closer/clearer scan.");
         return;
       }
 
