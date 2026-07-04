@@ -49,6 +49,7 @@ type Batch = { fileName: string; uploadedAt: string; from: string; to: string; i
 type ManualOriginal = { patient: string; date: string; medicine: string; medicare: string };
 type AiMedicine = { medicine?: string; labelNumber?: string; quantity?: string; repeats?: string; directions?: string; confidence?: number };
 type RecentItem = { kind: "Dispensed" | "Original"; title: string; subtitle: string; time: string };
+type ServerState = { scripts: ScriptRec[]; scans: Scan[]; originals: OriginalEntry[]; batches: Batch[] };
 
 const DB = "pharmacy-verification-db";
 const SCRIPT_KEY = "fred-master-scripts-v3";
@@ -218,6 +219,29 @@ function downloadCsv(fileName: string, rows: ReviewRow[]) {
   link.click();
   URL.revokeObjectURL(url);
 }
+
+async function loadServerState(): Promise<ServerState> {
+  const response = await fetch("/api/server-state", { cache: "no-store" });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok) throw new Error(data.error || "Server storage failed");
+  const state = data.state || {};
+  return {
+    scripts: Array.isArray(state.scripts) ? state.scripts : [],
+    scans: Array.isArray(state.scans) ? state.scans : [],
+    originals: Array.isArray(state.originals) ? state.originals : [],
+    batches: Array.isArray(state.batches) ? state.batches : [],
+  };
+}
+
+async function saveServerState(patch: Partial<ServerState>) {
+  const response = await fetch("/api/server-save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok) throw new Error(data.error || "Server save failed");
+}
 const fmt = (v: string) => new Intl.DateTimeFormat("en-AU", { dateStyle: "short", timeStyle: "short" }).format(new Date(v));
 
 export default function Home() {
@@ -240,6 +264,8 @@ export default function Home() {
   const [uploadState, setUploadState] = useState({ active: false, percent: 0, label: "" });
   const [manualOriginal, setManualOriginal] = useState<ManualOriginal>({ patient: "", date: "", medicine: "", medicare: "" });
   const [tableMode, setTableMode] = useState<TableMode>("matched");
+  const [hydrated, setHydrated] = useState(false);
+  const [serverOnline, setServerOnline] = useState(false);
 
   function notify(text: string) {
     setToast(text);
@@ -250,16 +276,31 @@ export default function Home() {
   }
 
   useEffect(() => { void (async () => {
-    const s = await idbGet<ScriptRec[]>(SCRIPT_KEY, []);
-    const sc = await idbGet<Scan[]>(SCAN_KEY, []);
-    const p = await idbGet<OriginalEntry[]>(ORIGINAL_KEY, []);
-    const b = await idbGet<Batch[]>(BATCH_KEY, []);
-    setScripts(s); setScans(sc); setOriginals(p); setBatches(b); setLast(sc[0] ?? null);
+    try {
+      const state = await loadServerState();
+      setScripts(state.scripts);
+      setScans(state.scans);
+      setOriginals(state.originals);
+      setBatches(state.batches);
+      setLast(state.scans[0] ?? null);
+      setServerOnline(true);
+      notify("Server storage loaded. Shared across devices.");
+    } catch {
+      const s = await idbGet<ScriptRec[]>(SCRIPT_KEY, []);
+      const sc = await idbGet<Scan[]>(SCAN_KEY, []);
+      const p = await idbGet<OriginalEntry[]>(ORIGINAL_KEY, []);
+      const b = await idbGet<Batch[]>(BATCH_KEY, []);
+      setScripts(s); setScans(sc); setOriginals(p); setBatches(b); setLast(sc[0] ?? null);
+      setServerOnline(false);
+      notify("Server storage unavailable. Using this browser backup only.");
+    } finally {
+      setHydrated(true);
+    }
   })(); }, []);
-  useEffect(() => { void idbSet(SCRIPT_KEY, scripts); }, [scripts]);
-  useEffect(() => { void idbSet(SCAN_KEY, scans); }, [scans]);
-  useEffect(() => { void idbSet(ORIGINAL_KEY, originals); }, [originals]);
-  useEffect(() => { void idbSet(BATCH_KEY, batches); }, [batches]);
+  useEffect(() => { if (!hydrated) return; void idbSet(SCRIPT_KEY, scripts); void saveServerState({ scripts }).then(() => setServerOnline(true)).catch(() => setServerOnline(false)); }, [hydrated, scripts]);
+  useEffect(() => { if (!hydrated) return; void idbSet(SCAN_KEY, scans); void saveServerState({ scans }).then(() => setServerOnline(true)).catch(() => setServerOnline(false)); }, [hydrated, scans]);
+  useEffect(() => { if (!hydrated) return; void idbSet(ORIGINAL_KEY, originals); void saveServerState({ originals }).then(() => setServerOnline(true)).catch(() => setServerOnline(false)); }, [hydrated, originals]);
+  useEffect(() => { if (!hydrated) return; void idbSet(BATCH_KEY, batches); void saveServerState({ batches }).then(() => setServerOnline(true)).catch(() => setServerOnline(false)); }, [hydrated, batches]);
   useEffect(() => () => { zxingControlsRef.current?.stop(); streamRef.current?.getTracks().forEach((t) => t.stop()); }, []);
 
   const value = cleanLabel(detected || manual);
@@ -358,8 +399,8 @@ export default function Home() {
     setCameraOn(false);
   }
 
-  function saveDispensedCopy(documentType: DocumentType = "DISPENSED_LABEL") {
-    const v = cleanLabel(value);
+  function saveDispensedCopy(documentType: DocumentType = "DISPENSED_LABEL", forcedValue?: string) {
+    const v = cleanLabel(forcedValue ?? value);
     if (!v) return false;
     const rec = findScript(scripts, v);
     const already = scans.some((s) => norm(s.value) === norm(v));
@@ -420,7 +461,7 @@ export default function Home() {
         if (scriptFromAi) {
           setManual(scriptFromAi);
           setDetected("");
-          saveDispensedCopy(documentType);
+          saveDispensedCopy(documentType, scriptFromAi);
           return;
         }
         const entries = meds.map((med, index) => ({
@@ -473,7 +514,7 @@ export default function Home() {
 
   function saveCurrentScan() {
     if (mode === "dispensed_copy") {
-      if (value.trim()) { saveDispensedCopy("DISPENSED_LABEL"); return; }
+      if (value.trim()) { saveDispensedCopy("DISPENSED_LABEL", value); return; }
       void scanDocumentWithAi("dispensed_copy");
       return;
     }
