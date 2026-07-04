@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #07111f;
+  --foreground: #f8fafc;
 }
 
 @theme inline {
@@ -12,15 +12,65 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* { box-sizing: border-box; }
+
+html {
+  min-height: 100%;
+  background: linear-gradient(135deg, #020617 0%, #07111f 45%, #0f172a 100%);
 }
 
 body {
-  background: var(--background);
+  min-height: 100%;
+  margin: 0;
+  background: transparent;
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input {
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease, opacity 160ms ease;
+}
+
+button:not(:disabled):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 38px rgba(2, 6, 23, 0.18);
+}
+
+button:not(:disabled):active {
+  transform: translateY(0) scale(0.985);
+}
+
+input:focus {
+  outline: none;
+  border-color: #14b8a6;
+  box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.16);
+}
+
+main {
+  background: radial-gradient(circle at 15% 5%, rgba(45, 212, 191, 0.18), transparent 34rem), radial-gradient(circle at 86% 0%, rgba(56, 189, 248, 0.14), transparent 28rem) !important;
+}
+
+header {
+  overflow: hidden;
+  backdrop-filter: blur(18px);
+  box-shadow: 0 28px 70px rgba(2, 6, 23, 0.32) !important;
+}
+
+video {
+  background: #e2e8f0;
+}
+
+table { border-collapse: separate; border-spacing: 0; }
+thead th { background: #f8fafc; color: #0f172a; border-bottom: 1px solid #e2e8f0; }
+tbody tr:nth-child(even) { background: #f8fafc; }
+tbody tr:hover { background: #ecfeff; }
+
+.rounded-3xl { border-radius: 1.35rem; }
+.shadow-xl, .shadow-2xl { box-shadow: 0 24px 60px rgba(2, 6, 23, 0.20) !important; }
+.bg-white\/10 { backdrop-filter: blur(16px); }
+.bg-white { box-shadow: 0 20px 48px rgba(15, 23, 42, 0.10); }
+
+@media (max-width: 640px) {
+  main { padding-left: 0.85rem !important; padding-right: 0.85rem !important; }
 }
