@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Owing Script Matcher</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div class="brand"><div class="logo">Ow</div><div><h1>Owing Script Matcher</h1><p>Scan dispensed copies or repeats, then match originals back to Fred Script Numbers</p></div></div>
+    <button id="refreshBtn">Refresh</button>
+  </header>
+  <main>
+    <nav>
+      <button class="tab active" data-view="dashboard">Dashboard</button>
+      <button class="tab" data-view="labels">Scan Dispensed Copy</button>
+      <button class="tab" data-view="original">Scan Original Script</button>
+      <button class="tab" data-view="manual">Manual Entry</button>
+      <button class="tab" data-view="results">Results</button>
+    </nav>
+    <section id="dashboard" class="view active card">
+      <h2>Dashboard</h2>
+      <div class="kpis"><div><b id="fredCount">0</b><span>Fred records</span></div><div><b id="targetCount">0</b><span>Saved targets</span></div><div><b id="matchCount">0</b><span>Confirmed matches</span></div></div>
+      <div class="notice">Upload Fred Excel first. Then scan anything that represents a dispensed/owing script: Fred label, repeat authorisation, patient copy, no-barcode label, or a copy of the prescription. Later scan the original script and the app returns the Fred Script Number.</div>
+      <form id="fredForm"><input type="file" id="fredFile" accept=".xlsx,.xls,.csv" /><button>Import Fred Excel</button></form>
+      <button id="demoBtn">Load demo data</button>
+      <div id="dashboardMsg" class="msg"></div>
+    </section>
+    <section id="labels" class="view card">
+      <h2>Scan Dispensed Copy</h2>
+      <p>This mode accepts Fred labels, repeat authorisation forms, patient copies, no-barcode labels, or a copy of the original prescription used for dispensing.</p>
+      <div class="modeNote">AI first classifies the document type so repeat authorisations and original prescriptions do not get mixed up.</div>
+      <div class="actions"><button id="startLabelBtn">Open camera / scan barcode</button><button id="stopLabelBtn">Stop</button><button id="analyzeDispensedFrameBtn">Analyze current frame with AI</button></div>
+      <div class="camera" id="labelCamera"><video id="labelVideo" playsinline muted></video><div class="scanFrame"></div></div>
+      <label>Manual Fred Script Number</label><div class="inline"><input id="labelInput" inputmode="numeric" placeholder="e.g. 50676193" /><button id="lookupLabelBtn">Lookup</button></div>
+      <div id="labelResult"></div>
+      <h3>Saved Targets</h3><div id="targetList"></div>
+    </section>
+    <section id="original" class="view card">
+      <h2>Scan Original Script</h2>
+      <p>Live camera mode. The app captures a temporary frame in memory, sends it to the backend AI extractor, and does not store the image.</p>
+      <div class="actions"><button id="startOriginalBtn">Start camera</button><button id="stopOriginalBtn">Stop</button><button id="analyzeFrameBtn">Analyze current frame</button></div>
+      <div class="camera" id="originalCamera"><video id="originalVideo" playsinline muted></video><div class="scanFrame"></div></div>
+      <div id="extractResult"></div><div id="candidateResult"></div>
+    </section>
+    <section id="manual" class="view card">
+      <h2>Manual Entry Fallback</h2>
+      <p>For handwritten or unreadable scripts. Enter the minimum fields only.</p>
+      <div class="grid"><label>Patient name<input id="manualPatient" /></label><label>Medicine<input id="manualMedicine" /></label><label>Prescription date<input id="manualDate" placeholder="dd/mm/yyyy" /></label><label>Prescriber optional<input id="manualPrescriber" /></label></div>
+      <button id="manualMatchBtn">Find Fred Script Number</button><div id="manualResult"></div>
+    </section>
+    <section id="results" class="view card">
+      <h2>Confirmed Matches</h2>
+      <a class="download" href="/api/export-matches.csv">Download CSV</a>
+      <div id="matchList"></div>
+    </section>
+  </main>
+  <script src="https://unpkg.com/@zxing/browser@latest"></script>
+  <script src="app.js"></script>
+</body>
+</html>
