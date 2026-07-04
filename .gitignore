@@ -20,6 +20,12 @@
 # production
 /build
 
+# server data - never commit patient/FRED data
+/data/
+*.db
+*.sqlite
+*.sqlite3
+
 # misc
 .DS_Store
 *.pem
