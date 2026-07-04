@@ -44,6 +44,8 @@ Critical rules:
 - A FRED label or dispensed label is DISPENSED_LABEL.
 - A patient copy or copy of a prescription used as evidence of a dispensed/owing item is PRESCRIPTION_COPY unless it is clearly the original paper prescription.
 - If the prescription has multiple medicines/items, return one object per medicine in medicines.
+- For dispensed copies, repeat authorisations, labels, and patient copies, do NOT stop at barcode/script/label number. Extract patient, address, Medicare/patient identifier, date, medicine, quantity, directions, and repeats whenever visible.
+- scriptNumber and labelNumber are optional reference fields only. Never invent them. They are not the main matching key.
 - For handwritten prescriptions, read carefully. If a word or number is unclear, leave that field blank and lower confidence.
 - Never invent values. Use dd/mm/yyyy for dates when possible.`;
 
@@ -124,12 +126,12 @@ export async function POST(request: NextRequest) {
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return NextResponse.json({ ok: false, error: "OPENAI_API_KEY is not configured in Vercel Environment Variables" }, { status: 500 });
+    return NextResponse.json({ ok: false, error: "OPENAI_API_KEY is not configured on this server" }, { status: 500 });
   }
 
   const model = process.env.OPENAI_VISION_MODEL || process.env.OPENAI_MODEL || "gpt-5.1";
   const modePrompt = mode === "dispensed_copy"
-    ? "The user is scanning the dispensed/owing side. This may be a FRED label, repeat authorisation form, no-barcode label, patient copy, prescription copy, or occasionally an original prescription scanned in the wrong mode. Classify carefully and extract visible matching fields."
+    ? "The user is scanning the dispensed/owing side. This may be a FRED label, repeat authorisation form, no-barcode label, patient copy, prescription copy, or occasionally an original prescription scanned in the wrong mode. Classify carefully and extract all visible prescription details. The main goal is patient identity, address, Medicare/patient identifier, prescription/dispense date, medicines, quantities, and directions. Do not return only a code."
     : "The user is scanning the original paper prescription that arrived later. Classify carefully. If the image is actually a repeat authorisation, label, or patient copy, do not call it an original prescription.";
 
   try {
