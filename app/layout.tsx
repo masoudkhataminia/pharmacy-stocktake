@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Pharmacy Stocktake Scanner",
-  description: "Import pharmacy exports, scan prescription labels, match patient and medicine data, and confirm stocktake entries.",
+  title: "Owing Script Matcher",
+  description: "Match owing prescriptions, dispensed copies, repeat authorisations, and original scripts back to FRED script numbers.",
 };
 
 export default function RootLayout({
