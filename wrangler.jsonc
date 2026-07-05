@@ -7,11 +7,5 @@
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
-  },
-  "routes": [
-    {
-      "pattern": "direct.mypharmacyhub.net",
-      "custom_domain": true
-    }
-  ]
+  }
 }
