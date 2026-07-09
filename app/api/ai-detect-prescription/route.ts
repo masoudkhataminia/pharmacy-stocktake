@@ -26,6 +26,7 @@ type ExtractedPrescription = {
 };
 
 const DOCUMENT_TYPES: DocumentType[] = ["DISPENSED_LABEL", "REPEAT_AUTHORISATION", "PRESCRIPTION_COPY", "ORIGINAL_PRESCRIPTION", "UNKNOWN_DOCUMENT"];
+const OPENAI_API_KEY_ENV_NAMES = ["OPENAI_API_KEY", "OPENAI_VISION_API_KEY", "OPENAI_KEY", "CHATGPT_API_KEY"] as const;
 
 const BASE_PROMPT = `You are extracting information from Australian pharmacy documents for an owing script workflow.
 Return only valid compact JSON with these fields:
@@ -46,6 +47,14 @@ Critical rules:
 - If the prescription has multiple medicines/items, return one object per medicine in medicines.
 - For handwritten prescriptions, read carefully. If a word or number is unclear, leave that field blank and lower confidence.
 - Never invent values. Use dd/mm/yyyy for dates when possible.`;
+
+function getOpenAiApiKey() {
+  for (const envName of OPENAI_API_KEY_ENV_NAMES) {
+    const value = process.env[envName]?.trim();
+    if (value) return { apiKey: value, envName };
+  }
+  return { apiKey: "", envName: "" };
+}
 
 function sanitize(value: unknown) {
   return String(value ?? "").slice(0, 500).trim();
@@ -122,9 +131,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "No prescription image received" }, { status: 400 });
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
+  const { apiKey } = getOpenAiApiKey();
   if (!apiKey) {
-    return NextResponse.json({ ok: false, error: "OPENAI_API_KEY is not configured in Vercel Environment Variables" }, { status: 500 });
+    return NextResponse.json({
+      ok: false,
+      error: `OpenAI API key is not configured for this deployment. Set one of these runtime environment variables on the server/app that serves owing.mypharmacyhub.net: ${OPENAI_API_KEY_ENV_NAMES.join(", ")}. Secrets saved on other repositories are not available to this app automatically.`,
+    }, { status: 500 });
   }
 
   const model = process.env.OPENAI_VISION_MODEL || process.env.OPENAI_MODEL || "gpt-5.1";
